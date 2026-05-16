@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 // ─── SUPABASE CONFIG ────────────────────────────────────────────────────────
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = "https://iiwjnqfbhzfzwzvccapc.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable__-SfW9o5Xr5tZiEYeoOFUw_bCbOHTzb";
 const PASSCODE = "hsc2026";
 
 // ─── DEFAULT DATA ───────────────────────────────────────────────────────────
