@@ -1192,8 +1192,11 @@ export default function App() {
   const [subjectView, setSubjectView] = useState("HMS");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("anvi_dark") === "1");
+  const [darkMode, setDarkMode] = useState(false);
 
+  useEffect(() => {
+    setDarkMode(localStorage.getItem("anvi_dark") === "1");
+  }, []);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerSec, setTimerSec] = useState(0);
   const [timerSubject, setTimerSubject] = useState("HMS");
