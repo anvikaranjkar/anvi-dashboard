@@ -36,6 +36,7 @@ const DEFAULT_DATA = {
   heroImage: "",
   studySessions: [],
   dashWidgets: [],
+  habits: [], // { id, name, color, icon, logs: { "YYYY-MM-DD": true } }
   settings: { theme: "anvi", name: "Anvi" },
 };
 
@@ -1159,6 +1160,18 @@ const styles = `
     .spidey-sticker, .spidey-web { left: 12px; bottom: 12px; }
     .dash-two-col { grid-template-columns: 1fr !important; }
   }
+
+  /* ── STUDY CAL HEATMAP ── */
+  .heatmap-cell:hover { transform: scale(1.3); z-index: 2; }
+
+  /* ── HABIT TRACKER ── */
+  .habit-check-btn:hover { transform: scale(1.03); }
+
+  /* ── WIDGETS ── */
+  .btn-yellow { background: var(--yellow); color: #3A2A00; border: 2px solid var(--yellow-bright); box-shadow: 2px 2px 0px var(--yellow-bright); font-family: var(--font-pixel); font-size: 12px; cursor: pointer; padding: 8px 14px; }
+  .btn-yellow:hover { background: var(--yellow-bright); }
+  .btn-cyan { background: var(--cyan); color: #003344; border: 2px solid #00AACC; box-shadow: 2px 2px 0px #00AACC; font-family: var(--font-pixel); font-size: 12px; cursor: pointer; padding: 10px 16px; width: 100%; letter-spacing: 0.05em; }
+  .btn-cyan:hover { background: #00AACC; }
 `;
 
 // ─── SUPABASE CLIENT ─────────────────────────────────────────────────────────
@@ -1460,6 +1473,9 @@ export default function App() {
     { id: "extracurriculars", icon: "◆", label: "Work & Extras" },
     { id: "countdowns", icon: "⏳", label: "Countdowns" },
     { id: "timer", icon: "◷", label: "Study Timer" },
+    { id: "study-cal", icon: "📅", label: "Study Calendar" },
+    { id: "habits", icon: "🔥", label: "Habit Tracker" },
+    { id: "widgets", icon: "🖼", label: "My Widgets" },
     { id: "resources", icon: "⊞", label: "Resources" },
     { id: "settings", icon: "⚙", label: "Settings" },
   ];
@@ -1491,7 +1507,14 @@ export default function App() {
               </button>
             ))}
             <div className="nav-label">// TOOLS</div>
-            {navItems.slice(5).map((n) => (
+            {navItems.slice(5,10).map((n) => (
+              <button key={n.id} className={`nav-item ${tab === n.id ? "active" : ""}`} onClick={() => { setTab(n.id); setMobileNavOpen(false); }}>
+                <span className="nav-icon" style={{fontFamily:"var(--font-pixel)"}}>{n.icon}</span>
+                {n.label}
+              </button>
+            ))}
+            <div className="nav-label">// SETTINGS</div>
+            {navItems.slice(10).map((n) => (
               <button key={n.id} className={`nav-item ${tab === n.id ? "active" : ""}`} onClick={() => { setTab(n.id); setMobileNavOpen(false); }}>
                 <span className="nav-icon" style={{fontFamily:"var(--font-pixel)"}}>{n.icon}</span>
                 {n.label}
@@ -1605,6 +1628,15 @@ export default function App() {
             {tab === "settings" && (
               <SettingsPage data={data} update={update} saveData={saveData} />
             )}
+            {tab === "study-cal" && (
+              <StudyCalendarPage data={data} />
+            )}
+            {tab === "habits" && (
+              <HabitTrackerPage data={data} saveData={saveData} toast={toast} />
+            )}
+            {tab === "widgets" && (
+              <WidgetsPage data={data} saveData={saveData} toast={toast} />
+            )}
           </div>
         </div>
 
@@ -1619,10 +1651,8 @@ export default function App() {
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subjectTotals, maxSubjectTotal, setTab, urgentCount, mainPendingCount, saveData, toast, addMainTodo, toggleMainTodo, deleteMainTodo, toggleTodayFlag }) {
   const [dashTab, setDashTab] = useState("overview");
-  const [imgWidgetUrl, setImgWidgetUrl] = useState("");
   const [todayInput, setTodayInput] = useState("");
   const [todayPriority, setTodayPriority] = useState("med");
-  const imgWidgetFileRef = useRef(null);
 
   const todayTodos = (data.mainTodos || []).filter(t => t.isToday && !t.done);
   const todayDone = (data.mainTodos || []).filter(t => t.isToday && t.done);
@@ -1651,34 +1681,6 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
   ];
   const extraTodos = (data.extracurriculars?.todos || []).filter(t => !t.done);
   const dashWidgets = data.dashWidgets || [];
-
-  const addImageWidget = () => {
-    if (!imgWidgetUrl.trim()) return;
-    const newData = JSON.parse(JSON.stringify(data));
-    newData.dashWidgets = [...(newData.dashWidgets||[]), { id:uid(), url:imgWidgetUrl }];
-    saveData(newData);
-    setImgWidgetUrl(""); toast("🖼 Image widget added!");
-  };
-  const addImageWidgetFile = (e) => {
-    const files = Array.from(e.target.files||[]);
-    if (!files.length) return;
-    files.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const newData = JSON.parse(JSON.stringify(data));
-        newData.dashWidgets = [...(newData.dashWidgets||[]), { id:uid(), url:ev.target.result }];
-        saveData(newData);
-        toast("🖼 Image widget added!");
-      };
-      reader.readAsDataURL(file);
-    });
-    e.target.value = "";
-  };
-  const removeWidget = (id) => {
-    const newData = JSON.parse(JSON.stringify(data));
-    newData.dashWidgets = (newData.dashWidgets||[]).filter(w=>w.id!==id);
-    saveData(newData);
-  };
 
   return (
     <>
@@ -1837,36 +1839,14 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
             </>
           )}
 
-          {/* IMAGE WIDGETS TAB */}
+          {/* IMAGE WIDGETS TAB — now has its own page */}
           {dashTab === "widgets" && (
-            <>
-              <div className="card mb-3" style={{ borderTop:"3px solid var(--yellow-bright)" }}>
-                <div className="card-title"><span className="card-title-dot" style={{background:"var(--yellow)"}}/>ADD IMAGE WIDGET 🖼</div>
-                <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-                  <input type="url" placeholder="Paste image URL…" value={imgWidgetUrl} onChange={e=>setImgWidgetUrl(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addImageWidget()} />
-                  <button className="btn btn-yellow btn-sm" onClick={addImageWidget}>ADD</button>
-                </div>
-                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                  <button className="btn btn-ghost btn-sm" onClick={() => imgWidgetFileRef.current?.click()}>📁 Upload Image</button>
-                  <input ref={imgWidgetFileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={addImageWidgetFile} />
-                  <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>// add filler images to your dashboard ✦</span>
-                </div>
-              </div>
-              {dashWidgets.length === 0 ? (
-                <div style={{ textAlign:"center", padding:"48px 0", fontFamily:"var(--font-mono)", fontSize:12, color:"var(--muted)" }}>
-                  // no widgets yet — upload images to fill your dashboard ✦
-                </div>
-              ) : (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))", gap:12 }}>
-                  {dashWidgets.map(w => (
-                    <div key={w.id} style={{ position:"relative", border:"2px solid var(--border-pixel)", boxShadow:"3px 3px 0px var(--border-pixel)" }}>
-                      <img src={w.url} alt="widget" style={{ width:"100%", aspectRatio:"1", objectFit:"cover", display:"block" }} onError={e=>{e.target.style.background="var(--sand)"}} />
-                      <button onClick={()=>removeWidget(w.id)} style={{ position:"absolute", top:5, right:5, background:"rgba(0,0,0,0.6)", border:"2px solid white", width:24, height:24, color:"white", cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
+            <div style={{ textAlign:"center", padding:"48px 0" }}>
+              <div style={{ fontSize:48, marginBottom:16 }}>🖼</div>
+              <div style={{ fontFamily:"var(--font-pixel)", fontSize:16, color:"var(--text)", marginBottom:12 }}>WIDGETS HAVE THEIR OWN SPACE NOW</div>
+              <div style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--muted)", marginBottom:24 }}>// go to My Widgets for the full gallery with layouts ✦</div>
+              <button className="btn btn-primary" onClick={()=>setTab("widgets")}>GO TO MY WIDGETS →</button>
+            </div>
           )}
         </div>
 
@@ -2006,13 +1986,16 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
           {/* DASHBOARD IMAGE WIDGETS preview strip */}
           {dashWidgets.length > 0 && (
             <div className="card" style={{ borderTop:"3px solid var(--purple)", padding:"14px" }}>
-              <div className="card-title" style={{ marginBottom:10, fontSize:12 }}><span className="card-title-dot" style={{background:"var(--purple)"}}/>MY WIDGETS 🖼</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
-                {dashWidgets.slice(0,4).map(w => (
+              <div className="card-title" style={{ marginBottom:10, fontSize:12, justifyContent:"space-between" }}>
+                <span style={{display:"flex",alignItems:"center",gap:8}}><span className="card-title-dot" style={{background:"var(--purple)"}}/>MY WIDGETS 🖼</span>
+                <button onClick={()=>setTab("widgets")} style={{ fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--purple)", background:"none", border:"none", cursor:"pointer" }}>VIEW ALL →</button>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
+                {dashWidgets.slice(0,6).map(w => (
                   <img key={w.id} src={w.url} alt="widget" style={{ width:"100%", aspectRatio:"1", objectFit:"cover", border:"2px solid var(--border-pixel)" }} onError={e=>{e.target.style.background="var(--sand)"}} />
                 ))}
               </div>
-              {dashWidgets.length > 4 && <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--muted)", marginTop:6, textAlign:"center" }}>+{dashWidgets.length-4} more widgets</div>}
+              {dashWidgets.length > 6 && <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--muted)", marginTop:6, textAlign:"center" }}>+{dashWidgets.length-6} more</div>}
             </div>
           )}
         </div>
@@ -3198,6 +3181,572 @@ function SettingsPage({ data, update, saveData }) {
           </>
         )}
       </div>
+    </>
+  );
+}
+// ─── STUDY CALENDAR PAGE ─────────────────────────────────────────────────────
+function StudyCalendarPage({ data }) {
+  const sessions = data.studySessions || [];
+  const subjectColors = Object.fromEntries(
+    Object.entries(data.subjects).map(([k,v]) => [k, v.color])
+  );
+
+  // Build per-day totals for last 90 days (heatmap)
+  const today = new Date();
+  const days90 = Array.from({ length: 90 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - (89 - i));
+    return d.toISOString().slice(0, 10);
+  });
+  const dayTotals = {};
+  sessions.forEach(s => {
+    dayTotals[s.date] = (dayTotals[s.date] || 0) + s.duration;
+  });
+  const maxDay = Math.max(1, ...Object.values(dayTotals));
+
+  // Selected day view
+  const [selectedDay, setSelectedDay] = useState(today.toISOString().slice(0,10));
+  const daySessions = sessions.filter(s => s.date === selectedDay).sort((a,b) => new Date(a.ts)-new Date(b.ts));
+  const dayTotal = daySessions.reduce((a,s) => a+s.duration, 0);
+
+  // Month grouping of the 90 days
+  const weeks = [];
+  let week = [];
+  // Pad first week
+  const firstDayOfWeek = new Date(days90[0]).getDay(); // 0=Sun
+  for (let p = 0; p < firstDayOfWeek; p++) week.push(null);
+  days90.forEach(d => {
+    week.push(d);
+    if (week.length === 7) { weeks.push(week); week = []; }
+  });
+  if (week.length) { while(week.length < 7) week.push(null); weeks.push(week); }
+
+  const heatColor = (sec) => {
+    if (!sec) return "var(--sand)";
+    const pct = sec / maxDay;
+    if (pct < 0.25) return "#FFD6ED";
+    if (pct < 0.5)  return "#FF9FD0";
+    if (pct < 0.75) return "#FF3FA4";
+    return "#FF006E";
+  };
+
+  // Weekly bar chart (last 8 weeks)
+  const weekLabels = [];
+  const weekTotals = [];
+  for (let w = 7; w >= 0; w--) {
+    const wStart = new Date(today);
+    wStart.setDate(wStart.getDate() - wStart.getDay() - w * 7 + 1);
+    const wEnd = new Date(wStart); wEnd.setDate(wEnd.getDate() + 6);
+    const label = wStart.toLocaleDateString("en-AU",{day:"numeric",month:"short"});
+    const total = sessions.filter(s => s.date >= wStart.toISOString().slice(0,10) && s.date <= wEnd.toISOString().slice(0,10)).reduce((a,s)=>a+s.duration,0);
+    weekLabels.push(label); weekTotals.push(total);
+  }
+  const maxWeek = Math.max(1, ...weekTotals);
+
+  const fmtHM = (sec) => {
+    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  return (
+    <>
+      <div className="page-title">STUDY CALENDAR 📅</div>
+
+      {/* HEATMAP */}
+      <div className="card mb-3" style={{ borderTop:"3px solid var(--pink)" }}>
+        <div className="card-title"><span className="card-title-dot"/>ACTIVITY HEATMAP — LAST 90 DAYS</div>
+        <div style={{ display:"flex", gap:3, overflowX:"auto", paddingBottom:8 }}>
+          {weeks.map((wk, wi) => (
+            <div key={wi} style={{ display:"flex", flexDirection:"column", gap:3 }}>
+              {wk.map((d, di) => d ? (
+                <div
+                  key={di}
+                  title={`${d}: ${fmtHM(dayTotals[d]||0)}`}
+                  onClick={() => setSelectedDay(d)}
+                  style={{
+                    width:14, height:14,
+                    background: heatColor(dayTotals[d]||0),
+                    border: d === selectedDay ? "2px solid var(--text)" : "1px solid var(--border)",
+                    cursor:"pointer",
+                    transition:"transform 0.1s",
+                    boxShadow: d === selectedDay ? "0 0 0 1px var(--pink)" : "none",
+                  }}
+                />
+              ) : <div key={di} style={{width:14,height:14}}/>)}
+            </div>
+          ))}
+        </div>
+        <div style={{ display:"flex", gap:6, alignItems:"center", marginTop:10, fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>
+          less
+          {["var(--sand)","#FFD6ED","#FF9FD0","#FF3FA4","#FF006E"].map((c,i) => (
+            <div key={i} style={{width:12,height:12,background:c,border:"1px solid var(--border)"}}/>
+          ))}
+          more
+        </div>
+      </div>
+
+      <div className="grid-2 mb-3">
+        {/* DAY VIEW */}
+        <div className="card" style={{ borderTop:`3px solid var(--cyan)` }}>
+          <div className="card-title" style={{ justifyContent:"space-between" }}>
+            <span style={{ display:"flex",alignItems:"center",gap:8 }}><span className="card-title-dot" style={{background:"var(--cyan)"}}/>
+              {new Date(selectedDay+"T12:00:00").toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long"})}
+            </span>
+            <span style={{ fontFamily:"var(--font-pixel)", fontSize:11, color:"var(--cyan)" }}>{fmtHM(dayTotal)}</span>
+          </div>
+          {daySessions.length === 0 ? (
+            <div style={{fontFamily:"var(--font-mono)",fontSize:11,color:"var(--muted)",padding:"16px 0"}}>// no sessions recorded on this day<br/>// click a heatmap cell to explore</div>
+          ) : (
+            <div style={{ position:"relative", paddingLeft:20 }}>
+              {/* timeline line */}
+              <div style={{ position:"absolute", left:7, top:0, bottom:0, width:2, background:"var(--border)", borderRadius:2 }} />
+              {daySessions.map((s,i) => {
+                const clr = subjectColors[s.subject] || "var(--pink)";
+                const time = new Date(s.ts).toLocaleTimeString("en-AU",{hour:"2-digit",minute:"2-digit"});
+                return (
+                  <div key={s.id} style={{ position:"relative", marginBottom:14 }}>
+                    {/* dot */}
+                    <div style={{ position:"absolute", left:-16, top:4, width:10, height:10, background:clr, border:"2px solid white", boxShadow:`0 0 0 2px ${clr}` }} />
+                    <div style={{ padding:"10px 12px", background:`${clr}18`, border:`2px solid ${clr}44`, borderLeft:`3px solid ${clr}` }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                        <div>
+                          <div style={{ fontFamily:"var(--font-pixel)", fontSize:12, color:clr }}>{s.subject}</div>
+                          {s.label && s.label !== s.subject && (
+                            <div style={{ fontFamily:"var(--font-body)", fontSize:12, color:"var(--text-soft)", marginTop:2 }}>{s.label}</div>
+                          )}
+                        </div>
+                        <div style={{ textAlign:"right" }}>
+                          <div style={{ fontFamily:"var(--font-pixel)", fontSize:13, color:"var(--text)" }}>{fmtHM(s.duration)}</div>
+                          <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--muted)", marginTop:2 }}>{time}{s.manual?" · manual":""}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {/* day total */}
+              <div style={{ padding:"8px 12px", background:"var(--sand)", border:"2px solid var(--border-pixel)", display:"flex", justifyContent:"space-between", marginTop:4 }}>
+                <span style={{fontFamily:"var(--font-pixel)",fontSize:11,color:"var(--text)"}}>TOTAL</span>
+                <span style={{fontFamily:"var(--font-pixel)",fontSize:13,color:"var(--pink)"}}>{fmtHM(dayTotal)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* WEEKLY BARS */}
+        <div className="card" style={{ borderTop:"3px solid var(--purple)" }}>
+          <div className="card-title"><span className="card-title-dot" style={{background:"var(--purple)"}}/>WEEKLY OVERVIEW (8 WEEKS)</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {weekLabels.map((label, i) => (
+              <div key={i} className="bar-row">
+                <div className="bar-label" style={{ width:70, fontSize:10 }}>{label}</div>
+                <div className="bar-track" style={{ flex:1 }}>
+                  <div className="bar-fill" style={{ width:`${(weekTotals[i]/maxWeek)*100}%`, background: i===7?"var(--pink)":"var(--purple)", opacity: i===7?1:0.6+i*0.05 }} />
+                </div>
+                <div className="bar-val">{weekTotals[i] ? fmtHM(weekTotals[i]) : "—"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* SUBJECT BREAKDOWN for selected day */}
+      {daySessions.length > 0 && (
+        <div className="card" style={{ borderTop:"3px solid var(--yellow-bright)" }}>
+          <div className="card-title"><span className="card-title-dot" style={{background:"var(--yellow)"}}/>BREAKDOWN — {new Date(selectedDay+"T12:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short"})}</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(160px,1fr))", gap:12 }}>
+            {Object.entries(
+              daySessions.reduce((acc, s) => { acc[s.subject]=(acc[s.subject]||0)+s.duration; return acc; }, {})
+            ).sort((a,b)=>b[1]-a[1]).map(([sub,sec]) => {
+              const clr = subjectColors[sub] || "var(--pink)";
+              const pct = Math.round(sec/dayTotal*100);
+              return (
+                <div key={sub} style={{ padding:"12px 14px", border:`2px solid ${clr}44`, borderTop:`3px solid ${clr}` }}>
+                  <div style={{ fontFamily:"var(--font-pixel)", fontSize:12, color:clr, marginBottom:6 }}>{sub}</div>
+                  <div style={{ fontFamily:"var(--font-pixel)", fontSize:20, color:"var(--text)" }}>{fmtHM(sec)}</div>
+                  <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--muted)", marginTop:4 }}>{pct}% of today</div>
+                  <div style={{ marginTop:8, height:5, background:"var(--border)" }}>
+                    <div style={{ height:"100%", width:`${pct}%`, background:clr }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── HABIT TRACKER PAGE ────────────────────────────────────────────────────────
+function HabitTrackerPage({ data, saveData, toast }) {
+  const [newHabitName, setNewHabitName] = useState("");
+  const [newHabitIcon, setNewHabitIcon] = useState("⭐");
+  const [newHabitColor, setNewHabitColor] = useState("#FF3FA4");
+  const [showAdd, setShowAdd] = useState(false);
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  const habits = data.habits || [];
+
+  const addHabit = () => {
+    if (!newHabitName.trim()) return;
+    const newData = JSON.parse(JSON.stringify(data));
+    newData.habits = [...(newData.habits||[]), { id:uid(), name:newHabitName, icon:newHabitIcon, color:newHabitColor, logs:{} }];
+    saveData(newData); toast(`${newHabitIcon} Habit added!`);
+    setNewHabitName(""); setShowAdd(false);
+  };
+  const deleteHabit = (id) => {
+    const newData = JSON.parse(JSON.stringify(data));
+    newData.habits = newData.habits.filter(h=>h.id!==id); saveData(newData);
+  };
+  const toggleLog = (id, dateStr) => {
+    const newData = JSON.parse(JSON.stringify(data));
+    const h = newData.habits.find(h=>h.id===id);
+    if (!h) return;
+    h.logs = h.logs || {};
+    if (h.logs[dateStr]) delete h.logs[dateStr]; else h.logs[dateStr] = true;
+    saveData(newData);
+  };
+
+  // Build last 30 days
+  const last30 = Array.from({length:30},(_,i)=>{
+    const d = new Date(); d.setDate(d.getDate()-(29-i));
+    return d.toISOString().slice(0,10);
+  });
+
+  const calcStreak = (logs) => {
+    let streak = 0;
+    const d = new Date();
+    while (true) {
+      const s = d.toISOString().slice(0,10);
+      if (logs[s]) { streak++; d.setDate(d.getDate()-1); }
+      else break;
+    }
+    return streak;
+  };
+
+  const calcLongestStreak = (logs) => {
+    const sorted = Object.keys(logs).filter(k=>logs[k]).sort();
+    let max=0, cur=0;
+    for (let i=0; i<sorted.length; i++) {
+      if (i===0) { cur=1; }
+      else {
+        const prev = new Date(sorted[i-1]); prev.setDate(prev.getDate()+1);
+        if (prev.toISOString().slice(0,10)===sorted[i]) cur++;
+        else cur=1;
+      }
+      max=Math.max(max,cur);
+    }
+    return max;
+  };
+
+  const ICONS = ["⭐","💪","📚","🧘","💧","🏃","🥗","😴","✍️","🎯","🧠","🎵","📝","🌱","☀️","🔥"];
+  const COLORS = ["#FF3FA4","#BF5FFF","#00E5FF","#00F5A0","#FFD700","#FF6B35","#4CC9F0","#06D6A0"];
+
+  return (
+    <>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <div className="page-title">HABIT TRACKER 🔥</div>
+        <button className="btn btn-primary btn-sm" onClick={()=>setShowAdd(v=>!v)}>
+          {showAdd ? "✕ CANCEL" : "+ NEW HABIT"}
+        </button>
+      </div>
+
+      {showAdd && (
+        <div className="card mb-3" style={{ borderTop:"3px solid var(--mint)" }}>
+          <div className="card-title"><span className="card-title-dot" style={{background:"var(--mint)"}}/>ADD NEW HABIT</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto", gap:10, marginBottom:14 }}>
+            <input type="text" placeholder="Habit name e.g. Drink 2L water, Exercise 30min…" value={newHabitName} onChange={e=>setNewHabitName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addHabit()} />
+            <input type="color" value={newHabitColor} onChange={e=>setNewHabitColor(e.target.value)} style={{ width:48, height:44, padding:4, cursor:"pointer", border:"2px solid var(--border-pixel)" }} title="Pick colour" />
+            <button className="btn btn-primary btn-sm" onClick={addHabit}>ADD +</button>
+          </div>
+          <div className="insight-label mb-2">PICK ICON</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {ICONS.map(ic => (
+              <button key={ic} onClick={()=>setNewHabitIcon(ic)} style={{ fontSize:20, width:40, height:40, cursor:"pointer", border: ic===newHabitIcon ? `2px solid var(--pink)` : "2px solid var(--border)", background: ic===newHabitIcon ? "var(--pink-light)" : "var(--bg2)", boxShadow: ic===newHabitIcon ? "var(--shadow-hot)" : "2px 2px 0px var(--border-pixel)" }}>{ic}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {habits.length === 0 && !showAdd && (
+        <div style={{ textAlign:"center", padding:"60px 0", fontFamily:"var(--font-mono)", fontSize:12, color:"var(--muted)" }}>
+          // no habits yet — click "+ NEW HABIT" to start tracking ✦
+        </div>
+      )}
+
+      {/* TODAY'S CHECK-IN */}
+      {habits.length > 0 && (
+        <div className="card mb-3" style={{ borderTop:"3px solid var(--yellow-bright)" }}>
+          <div className="card-title">
+            <span className="card-title-dot" style={{background:"var(--yellow)"}}/>
+            TODAY'S CHECK-IN
+            <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)", marginLeft:10 }}>
+              {new Date().toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"short"})}
+            </span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12 }}>
+            {habits.map(h => {
+              const done = !!(h.logs||{})[todayStr];
+              const streak = calcStreak(h.logs||{});
+              return (
+                <button
+                  key={h.id}
+                  onClick={()=>toggleLog(h.id, todayStr)}
+                  style={{
+                    display:"flex", flexDirection:"column", alignItems:"center", gap:8,
+                    padding:"18px 12px", cursor:"pointer",
+                    border: done ? `3px solid ${h.color}` : "2px solid var(--border-pixel)",
+                    background: done ? `${h.color}22` : "var(--bg2)",
+                    boxShadow: done ? `3px 3px 0px ${h.color}` : "3px 3px 0px var(--border-pixel)",
+                    transition:"all 0.15s", position:"relative",
+                  }}
+                >
+                  <div style={{ fontSize:28 }}>{h.icon}</div>
+                  <div style={{ fontFamily:"var(--font-pixel)", fontSize:11, color: done ? h.color : "var(--text)", textAlign:"center" }}>{h.name}</div>
+                  {streak > 0 && (
+                    <div style={{ fontFamily:"var(--font-pixel)", fontSize:10, color:"#FF6B35" }}>🔥 {streak} day streak</div>
+                  )}
+                  <div style={{
+                    position:"absolute", top:8, right:8,
+                    width:20, height:20,
+                    background: done ? h.color : "var(--border)",
+                    border: `2px solid ${done ? h.color : "var(--border-pixel)"}`,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontFamily:"var(--font-pixel)", fontSize:12, color:"white"
+                  }}>{done ? "✓" : ""}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* PROGRESS GRID (last 30 days) */}
+      {habits.length > 0 && (
+        <div className="card mb-3" style={{ borderTop:"3px solid var(--purple)" }}>
+          <div className="card-title"><span className="card-title-dot" style={{background:"var(--purple)"}}/>30-DAY PROGRESS GRID</div>
+          {/* Day headers */}
+          <div style={{ overflowX:"auto" }}>
+            <div style={{ minWidth:700 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"160px repeat(30, 1fr)", gap:3, marginBottom:4 }}>
+                <div />
+                {last30.map(d => (
+                  <div key={d} style={{ fontFamily:"var(--font-mono)", fontSize:8, color:"var(--muted)", textAlign:"center", lineHeight:1 }}>
+                    {new Date(d+"T12:00:00").getDate()}
+                  </div>
+                ))}
+              </div>
+              {habits.map(h => {
+                const streak = calcStreak(h.logs||{});
+                const longest = calcLongestStreak(h.logs||{});
+                const total = Object.values(h.logs||{}).filter(Boolean).length;
+                const rate = Math.round(total/30*100);
+                return (
+                  <div key={h.id} style={{ display:"grid", gridTemplateColumns:"160px repeat(30, 1fr)", gap:3, marginBottom:6, alignItems:"center" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, paddingRight:8 }}>
+                      <span style={{fontSize:16}}>{h.icon}</span>
+                      <div>
+                        <div style={{ fontFamily:"var(--font-pixel)", fontSize:10, color:h.color, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:110 }}>{h.name}</div>
+                        <div style={{ fontFamily:"var(--font-mono)", fontSize:8, color:"var(--muted)" }}>{rate}% this month</div>
+                      </div>
+                      <button onClick={()=>deleteHabit(h.id)} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:"var(--muted)", fontSize:14, padding:"0 2px", flexShrink:0 }}>×</button>
+                    </div>
+                    {last30.map(d => {
+                      const done = !!(h.logs||{})[d];
+                      const isToday2 = d === todayStr;
+                      return (
+                        <div
+                          key={d}
+                          title={`${d}`}
+                          onClick={()=>toggleLog(h.id,d)}
+                          style={{
+                            height:22,
+                            background: done ? h.color : "var(--sand)",
+                            border: isToday2 ? `2px solid var(--text)` : "1px solid var(--border)",
+                            cursor:"pointer",
+                            display:"flex", alignItems:"center", justifyContent:"center",
+                            fontSize:10, color:"white", fontFamily:"var(--font-pixel)",
+                            opacity: done ? 1 : 0.5,
+                            transition:"all 0.1s",
+                          }}
+                        >{done ? "✓" : ""}</div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HABIT STATS */}
+      {habits.length > 0 && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:14 }}>
+          {habits.map(h => {
+            const streak = calcStreak(h.logs||{});
+            const longest = calcLongestStreak(h.logs||{});
+            const total30 = last30.filter(d=>(h.logs||{})[d]).length;
+            const totalAll = Object.values(h.logs||{}).filter(Boolean).length;
+            return (
+              <div key={h.id} className="card" style={{ borderTop:`3px solid ${h.color}`, padding:"14px 16px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                  <span style={{fontSize:24}}>{h.icon}</span>
+                  <div>
+                    <div style={{ fontFamily:"var(--font-pixel)", fontSize:12, color:h.color }}>{h.name}</div>
+                    <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--muted)" }}>{totalAll} total check-ins</div>
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6, textAlign:"center" }}>
+                  {[
+                    { val: streak, label:"Current streak", unit:"🔥"},
+                    { val: longest, label:"Best streak", unit:"🏆"},
+                    { val: `${Math.round(total30/30*100)}%`, label:"Last 30 days", unit:"📊"},
+                  ].map((s,i) => (
+                    <div key={i} style={{ padding:"8px 4px", background:`${h.color}12`, border:`1px solid ${h.color}33` }}>
+                      <div style={{ fontFamily:"var(--font-pixel)", fontSize:18, color:h.color }}>{s.val}</div>
+                      <div style={{ fontFamily:"var(--font-pixel)", fontSize:8, color:"var(--muted)", marginTop:2 }}>{s.unit} {s.label}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* mini 4-week bar */}
+                <div style={{ marginTop:12, display:"flex", gap:3 }}>
+                  {last30.slice(-28).map((d,i) => (
+                    <div key={d} style={{ flex:1, height:8, background:(h.logs||{})[d]?h.color:"var(--sand)", border:"1px solid var(--border)", opacity:0.8+(i/28)*0.2 }} />
+                  ))}
+                </div>
+                <div style={{ fontFamily:"var(--font-mono)", fontSize:8, color:"var(--muted)", marginTop:4 }}>last 28 days ↑</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── WIDGETS PAGE ─────────────────────────────────────────────────────────────
+function WidgetsPage({ data, saveData, toast }) {
+  const [imgUrl, setImgUrl] = useState("");
+  const [imgCaption, setImgCaption] = useState("");
+  const [layout, setLayout] = useState("masonry");
+  const fileRef = useRef(null);
+  const widgets = data.dashWidgets || [];
+
+  const addUrl = () => {
+    if (!imgUrl.trim()) return;
+    const newData = JSON.parse(JSON.stringify(data));
+    newData.dashWidgets = [...(newData.dashWidgets||[]), { id:uid(), url:imgUrl, caption:imgCaption }];
+    saveData(newData); setImgUrl(""); setImgCaption("");
+    toast("🖼 Widget added!");
+  };
+  const addFile = (e) => {
+    const files = Array.from(e.target.files||[]);
+    if (!files.length) return;
+    let done = 0;
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const newData = JSON.parse(JSON.stringify(data));
+        newData.dashWidgets = [...(newData.dashWidgets||[]), { id:uid(), url:ev.target.result, caption:"" }];
+        saveData(newData); done++;
+        if (done===files.length) toast(`🖼 ${done} image${done>1?"s":""} added!`);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value="";
+  };
+  const removeWidget = (id) => {
+    const newData = JSON.parse(JSON.stringify(data));
+    newData.dashWidgets = (newData.dashWidgets||[]).filter(w=>w.id!==id);
+    saveData(newData);
+  };
+  const updateCaption = (id, caption) => {
+    const newData = JSON.parse(JSON.stringify(data));
+    const w = newData.dashWidgets.find(w=>w.id===id);
+    if (w) w.caption = caption;
+    saveData(newData);
+  };
+
+  const LAYOUTS = [
+    { id:"masonry", label:"Masonry" },
+    { id:"grid2", label:"2-col" },
+    { id:"grid3", label:"3-col" },
+    { id:"grid4", label:"4-col" },
+    { id:"large", label:"Large" },
+  ];
+
+  const gridStyle = {
+    masonry: { columns:"3 200px", gap:12 },
+    grid2: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 },
+    grid3: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 },
+    grid4: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12 },
+    large: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 },
+  }[layout];
+
+  return (
+    <>
+      <div className="page-title">MY WIDGETS 🖼</div>
+
+      {/* ADD PANEL */}
+      <div className="card mb-3" style={{ borderTop:"3px solid var(--yellow-bright)" }}>
+        <div className="card-title"><span className="card-title-dot" style={{background:"var(--yellow)"}}/>ADD IMAGE WIDGET</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:10, marginBottom:10 }}>
+          <input type="url" placeholder="Paste image URL…" value={imgUrl} onChange={e=>setImgUrl(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addUrl()} />
+          <input type="text" placeholder="Caption (optional)" value={imgCaption} onChange={e=>setImgCaption(e.target.value)} />
+          <button className="btn btn-yellow btn-sm" onClick={addUrl}>ADD URL</button>
+        </div>
+        <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+          <button className="btn btn-ghost btn-sm" onClick={()=>fileRef.current?.click()} style={{ borderColor:"var(--yellow-bright)", color:"var(--yellow)" }}>
+            📁 Upload Images (multiple)
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={addFile} />
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>// select multiple files at once · jpg, png, gif, webp</span>
+        </div>
+      </div>
+
+      {/* LAYOUT SWITCHER */}
+      {widgets.length > 0 && (
+        <div style={{ display:"flex", gap:8, marginBottom:20, alignItems:"center" }}>
+          <span style={{ fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--muted)", marginRight:4 }}>LAYOUT:</span>
+          {LAYOUTS.map(l => (
+            <button key={l.id} onClick={()=>setLayout(l.id)} style={{ fontFamily:"var(--font-pixel)", fontSize:10, padding:"4px 10px", border: layout===l.id?"2px solid var(--pink)":"2px solid var(--border-pixel)", background: layout===l.id?"var(--pink-light)":"var(--bg2)", color: layout===l.id?"var(--pink)":"var(--text)", cursor:"pointer", boxShadow: layout===l.id?"2px 2px 0px var(--pink)":"2px 2px 0px var(--border-pixel)" }}>
+              {l.label}
+            </button>
+          ))}
+          <span style={{ marginLeft:"auto", fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--muted)" }}>{widgets.length} widget{widgets.length!==1?"s":""}</span>
+        </div>
+      )}
+
+      {widgets.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"80px 0", fontFamily:"var(--font-mono)", fontSize:12, color:"var(--muted)" }}>
+          <div style={{ fontSize:48, marginBottom:16 }}>🖼</div>
+          // no widgets yet<br/>// upload images or paste URLs above to fill this space ✦
+        </div>
+      ) : (
+        <div style={gridStyle}>
+          {widgets.map(w => (
+            <div key={w.id} style={{ breakInside:"avoid", marginBottom: layout==="masonry"?12:0, position:"relative", border:"2px solid var(--border-pixel)", boxShadow:"3px 3px 0px var(--border-pixel)" }}>
+              <img
+                src={w.url} alt={w.caption||"widget"}
+                style={{ width:"100%", display:"block", objectFit:"cover", aspectRatio: layout==="large"?"4/3":layout==="masonry"?"auto":"1" }}
+                onError={e=>{e.target.style.background="var(--sand)";e.target.style.minHeight="120px";}}
+              />
+              <div style={{ padding:"8px 10px", display:"flex", alignItems:"center", gap:8, background:"var(--bg2)", borderTop:"1px solid var(--border)" }}>
+                <input
+                  type="text"
+                  placeholder="Add caption…"
+                  value={w.caption||""}
+                  onChange={e=>updateCaption(w.id,e.target.value)}
+                  style={{ flex:1, border:"none", background:"transparent", fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--text-soft)", padding:0, outline:"none" }}
+                />
+                <button onClick={()=>removeWidget(w.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--muted)", fontSize:16, padding:"0 4px", flexShrink:0, opacity:0.6 }}>×</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
