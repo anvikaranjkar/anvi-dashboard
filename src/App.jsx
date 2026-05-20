@@ -1273,14 +1273,38 @@ export default function App() {
     setTimerSec(0);
   };
 
-  const addMainTodo = (text, priority = "med", dueDate = "") => {
+  const addMainTodo = (text, priority = "med", dueDate = "", isToday = false) => {
     if (!text.trim()) return;
     const newData = JSON.parse(JSON.stringify(data));
-    const todo = { id: uid(), text, done: false, priority, dueDate, section: "general" };
+    const todo = { id: uid(), text, done: false, priority, dueDate, section: "general", isToday };
     newData.mainTodos = [...(newData.mainTodos || []), todo];
     saveData(newData);
     if (dueDate) scheduleNotification(todo);
     if (priority === "high") toast(`🔴 High priority added`);
+    else if (isToday) toast(`📌 Added to today's focus!`);
+  };
+  const toggleTodayFlag = (id) => {
+    const newData = JSON.parse(JSON.stringify(data));
+    const t = newData.mainTodos.find((x) => x.id === id);
+    if (t) t.isToday = !t.isToday;
+    saveData(newData);
+  };
+  const logStudyManual = (subject, label, hours, minutes) => {
+    const totalSec = (parseInt(hours)||0)*3600 + (parseInt(minutes)||0)*60;
+    if (totalSec < 60) { toast("⚠ Enter at least 1 minute"); return; }
+    const session = {
+      id: uid(),
+      subject,
+      label: label.trim() || subject,
+      duration: totalSec,
+      date: today(),
+      ts: new Date().toISOString(),
+      manual: true
+    };
+    const newData = JSON.parse(JSON.stringify(data));
+    newData.studySessions = [...(newData.studySessions || []), session];
+    saveData(newData);
+    toast(`✓ Logged ${hours||0}h ${minutes||0}m for "${session.label}"`);
   };
   const toggleMainTodo = (id) => {
     const newData = JSON.parse(JSON.stringify(data));
@@ -1536,13 +1560,15 @@ export default function App() {
                 maxSubjectTotal={maxSubjectTotal} setTab={setTab}
                 urgentCount={urgentCount} mainPendingCount={mainPendingCount}
                 saveData={saveData} toast={toast}
+                addMainTodo={addMainTodo} toggleMainTodo={toggleMainTodo}
+                deleteMainTodo={deleteMainTodo} toggleTodayFlag={toggleTodayFlag}
               />
             )}
             {tab === "todos" && (
               <TodosPage
                 data={data} addMainTodo={addMainTodo} toggleMainTodo={toggleMainTodo}
                 deleteMainTodo={deleteMainTodo} addTodo={addTodo} toggleTodo={toggleTodo}
-                deleteTodo={deleteTodo}
+                deleteTodo={deleteTodo} toggleTodayFlag={toggleTodayFlag}
               />
             )}
             {tab === "goals" && (
@@ -1570,6 +1596,7 @@ export default function App() {
                 todaySessions={todaySessions} thisWeekSessions={thisWeekSessions}
                 todayTotal={todayTotal} thisWeekTotal={thisWeekTotal}
                 subjectTotals={subjectTotals} maxSubjectTotal={maxSubjectTotal}
+                logStudyManual={logStudyManual} toast={toast}
               />
             )}
             {tab === "resources" && (
@@ -1590,10 +1617,15 @@ export default function App() {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subjectTotals, maxSubjectTotal, setTab, urgentCount, mainPendingCount, saveData, toast }) {
+function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subjectTotals, maxSubjectTotal, setTab, urgentCount, mainPendingCount, saveData, toast, addMainTodo, toggleMainTodo, deleteMainTodo, toggleTodayFlag }) {
   const [dashTab, setDashTab] = useState("overview");
   const [imgWidgetUrl, setImgWidgetUrl] = useState("");
+  const [todayInput, setTodayInput] = useState("");
+  const [todayPriority, setTodayPriority] = useState("med");
   const imgWidgetFileRef = useRef(null);
+
+  const todayTodos = (data.mainTodos || []).filter(t => t.isToday && !t.done);
+  const todayDone = (data.mainTodos || []).filter(t => t.isToday && t.done);
 
   const urgentTodos = Object.entries(data.subjects).flatMap(([sub, s]) => {
     const todos = (s.todos || []).filter((t) => !t.done && t.priority === "high").map((t) => ({ ...t, subject: sub }));
@@ -1841,6 +1873,73 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
         {/* RIGHT SIDE: Persistent todos + countdowns panels */}
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
 
+          {/* TODAY'S FOCUS — quick-add and view */}
+          <div className="card" style={{ borderTop:"3px solid var(--mint)", background:"linear-gradient(135deg, var(--mint-light) 0%, var(--bg2) 100%)" }}>
+            <div className="card-title" style={{ justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span className="card-title-dot" style={{background:"var(--mint)"}} />
+                TODAY'S FOCUS 📌
+              </div>
+              <div style={{ fontFamily:"var(--font-mono)", fontSize:9, color:"var(--muted)" }}>{new Date().toLocaleDateString("en-AU",{weekday:"short",day:"numeric",month:"short"})}</div>
+            </div>
+            {/* Quick add */}
+            <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+              <input
+                type="text"
+                placeholder="Add task for today…"
+                value={todayInput}
+                onChange={e=>setTodayInput(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"&&todayInput.trim()){ addMainTodo(todayInput,todayPriority,"",true); setTodayInput(""); } }}
+                style={{ flex:1, fontSize:12 }}
+              />
+              <select value={todayPriority} onChange={e=>setTodayPriority(e.target.value)} style={{ width:72, fontSize:11 }}>
+                <option value="high">🔴 High</option>
+                <option value="med">🟡 Med</option>
+                <option value="low">🟢 Low</option>
+              </select>
+              <button className="btn btn-sm" style={{ background:"var(--mint)", color:"#003322", border:"2px solid #00C880", boxShadow:"2px 2px 0px #00C880", fontFamily:"var(--font-pixel)", fontSize:11, whiteSpace:"nowrap" }}
+                onClick={()=>{ if(todayInput.trim()){ addMainTodo(todayInput,todayPriority,"",true); setTodayInput(""); } }}>
+                + ADD
+              </button>
+            </div>
+            {/* Today todos list */}
+            {todayTodos.length === 0 && todayDone.length === 0 ? (
+              <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)", padding:"6px 0" }}>// no tasks set for today yet ✦</div>
+            ) : (
+              <div style={{ maxHeight:200, overflowY:"auto" }}>
+                {todayTodos.map(t => (
+                  <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px dashed var(--border)" }}>
+                    <button className={`todo-check ${t.done?"done":""}`} onClick={()=>toggleMainTodo(t.id)} style={{width:16,height:16,fontSize:9}}>{t.done&&"✓"}</button>
+                    <div style={{ flex:1, fontFamily:"var(--font-body)", fontSize:12, color:"var(--text)" }}>{t.text}</div>
+                    <span className={`badge badge-${t.priority}`} style={{fontSize:8}}>{t.priority}</span>
+                    <button onClick={()=>deleteMainTodo(t.id)} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:14,lineHeight:1,opacity:0.6}}>×</button>
+                  </div>
+                ))}
+                {todayDone.length > 0 && (
+                  <div style={{ marginTop:6 }}>
+                    <div style={{ fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--muted)", letterSpacing:"0.08em", marginBottom:4 }}>✓ DONE ({todayDone.length})</div>
+                    {todayDone.map(t => (
+                      <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0", opacity:0.5 }}>
+                        <button className="todo-check done" onClick={()=>toggleMainTodo(t.id)} style={{width:16,height:16,fontSize:9}}>✓</button>
+                        <div style={{ flex:1, fontFamily:"var(--font-body)", fontSize:11, textDecoration:"line-through", color:"var(--muted)" }}>{t.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {todayTodos.length > 0 && (
+              <div style={{ marginTop:8, display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ flex:1, height:6, background:"var(--border)", border:"1px solid var(--border-pixel)" }}>
+                  <div style={{ height:"100%", background:"var(--mint)", width:`${Math.round(todayDone.length/(todayDone.length+todayTodos.length)*100)}%`, transition:"width 0.5s" }} />
+                </div>
+                <div style={{ fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--mint)", whiteSpace:"nowrap" }}>
+                  {todayDone.length}/{todayDone.length+todayTodos.length}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* ALWAYS-VISIBLE TODOS PANEL */}
           <div className="card" style={{ borderTop:"3px solid var(--pink)", flex:"none" }}>
             <div className="card-title" style={{ justifyContent:"space-between" }}>
@@ -1850,24 +1949,31 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
               </div>
               <button onClick={() => setTab("todos")} style={{ fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--pink)", background:"none", border:"none", cursor:"pointer", letterSpacing:"0.06em" }}>VIEW ALL →</button>
             </div>
-            <div style={{ maxHeight:280, overflowY:"auto" }}>
+            <div style={{ maxHeight:260, overflowY:"auto" }}>
               {allPendingTodos.length === 0 ? (
                 <div className="text-sm text-muted" style={{fontFamily:"var(--font-mono)"}}>// all done! 🎉</div>
-              ) : allPendingTodos.slice(0,12).map(t => (
-                <div key={t.id+t.source} className="todo-item" style={{ padding:"6px 0" }}>
-                  <div style={{ width:8, height:8, borderRadius:0, background: t.source==="General" ? "var(--yellow)" : (data.subjects[t.source.replace(" 📐","")]?.color || "var(--pink)"), flexShrink:0, marginTop:5 }} />
+              ) : allPendingTodos.slice(0,15).map(t => (
+                <div key={t.id+t.source} className="todo-item" style={{ padding:"5px 0" }}>
+                  <div style={{ width:7, height:7, borderRadius:0, background: t.source==="General" ? "var(--yellow)" : (data.subjects[t.source.replace(" 📐","")]?.color || "var(--pink)"), flexShrink:0, marginTop:6 }} />
                   <div className="todo-body">
-                    <div className="todo-text" style={{ fontSize:12 }}>
+                    <div className="todo-text" style={{ fontSize:11 }}>
                       {t._isEx && <span style={{ fontSize:8, color:"var(--blue)", marginRight:4 }}>📐</span>}
                       {t.text}
                     </div>
-                    <div style={{ fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--muted)", marginTop:1 }}>{t.source}</div>
+                    <div style={{ fontFamily:"var(--font-pixel)", fontSize:8, color:"var(--muted)", marginTop:1 }}>{t.source}</div>
                   </div>
-                  <span className={`badge badge-${t.priority||"med"}`} style={{ fontSize:8 }}>{t.priority||"med"}</span>
+                  <span className={`badge badge-${t.priority||"med"}`} style={{ fontSize:7 }}>{t.priority||"med"}</span>
+                  {t.source === "General" && (
+                    <button
+                      title={t.isToday ? "Remove from today" : "Pin to today"}
+                      onClick={()=>toggleTodayFlag(t.id)}
+                      style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, opacity: t.isToday ? 1 : 0.3, color:"var(--mint)", padding:"0 2px", transition:"opacity 0.15s" }}
+                    >📌</button>
+                  )}
                 </div>
               ))}
-              {allPendingTodos.length > 12 && (
-                <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)", textAlign:"center", padding:"6px 0" }}>+{allPendingTodos.length-12} more</div>
+              {allPendingTodos.length > 15 && (
+                <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)", textAlign:"center", padding:"6px 0" }}>+{allPendingTodos.length-15} more</div>
               )}
             </div>
           </div>
@@ -2103,34 +2209,63 @@ function CountdownsPage({ data, addCountdown, deleteCountdown }) {
 }
 
 // ─── ALL TODOS PAGE ───────────────────────────────────────────────────────────
-function TodosPage({ data, addMainTodo, toggleMainTodo, deleteMainTodo, addTodo, toggleTodo, deleteTodo }) {
+function TodosPage({ data, addMainTodo, toggleMainTodo, deleteMainTodo, addTodo, toggleTodo, deleteTodo, toggleTodayFlag }) {
   const [input, setInput] = useState("");
   const [priority, setPriority] = useState("med");
   const [dueDate, setDueDate] = useState("");
+  const [isToday, setIsToday] = useState(false);
   const [openSections, setOpenSections] = useState({});
 
   const toggleSection = (key) => setOpenSections((s) => ({ ...s, [key]: !s[key] }));
   const pendingMain = (data.mainTodos || []).filter((t) => !t.done);
   const doneMain = (data.mainTodos || []).filter((t) => t.done);
+  const todayPending = pendingMain.filter(t => t.isToday);
   const subjectNames = Object.keys(data.subjects);
   const isOverdue = (dueDate) => dueDate && new Date(dueDate) < new Date();
 
   return (
     <>
       <div className="page-title">ALL TO-DOS ◈</div>
+
+      {/* TODAY'S FOCUS SECTION */}
+      {todayPending.length > 0 && (
+        <div className="card mb-3" style={{ borderTop:"3px solid var(--mint)", background:"linear-gradient(135deg, var(--mint-light) 0%, var(--bg2) 100%)" }}>
+          <div className="card-title"><span className="card-title-dot" style={{background:"var(--mint)"}}/>TODAY'S FOCUS 📌 <span style={{fontFamily:"var(--font-mono)",fontSize:10,color:"var(--muted)",fontWeight:"normal"}}>— {new Date().toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"short"})}</span></div>
+          {todayPending.map((t) => (
+            <div key={t.id} className="todo-item" style={{ background:"rgba(0,245,160,0.06)", padding:"8px 6px", marginBottom:2 }}>
+              <button className={`todo-check ${t.done?"done":""}`} onClick={() => toggleMainTodo(t.id)}>{t.done && "✓"}</button>
+              <div className="todo-body">
+                <div className="todo-text">{t.text}</div>
+                {t.dueDate && <div className={`todo-due ${isOverdue(t.dueDate) ? "overdue":""}`}>{isOverdue(t.dueDate) ? "⚠ Overdue · ":"📅 "}{fmtDateTime(t.dueDate)}</div>}
+              </div>
+              <span className={`badge badge-${t.priority}`}>{t.priority}</span>
+              <button title="Remove from today" onClick={()=>toggleTodayFlag(t.id)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:"var(--mint)", padding:"0 2px" }}>📌</button>
+              <button className="todo-del" onClick={() => deleteMainTodo(t.id)}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="card mb-3" style={{ borderTop:"3px solid var(--pink)" }}>
         <div className="card-title"><span className="card-title-dot" />ADD TO-DO</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto", gap:8, alignItems:"flex-start" }}>
-          <input type="text" placeholder="What do you need to do?" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { addMainTodo(input, priority, dueDate); setInput(""); setDueDate(""); } }} />
-          <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={{ width:200 }} />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto auto", gap:8, alignItems:"flex-start" }}>
+          <input type="text" placeholder="What do you need to do?" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { addMainTodo(input, priority, dueDate, isToday); setInput(""); setDueDate(""); setIsToday(false); } }} />
+          <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={{ width:190 }} />
           <select value={priority} onChange={(e) => setPriority(e.target.value)} style={{ width:90 }}>
             <option value="high">🔴 High</option>
             <option value="med">🟡 Med</option>
             <option value="low">🟢 Low</option>
           </select>
-          <button className="btn btn-primary btn-sm" onClick={() => { addMainTodo(input, priority, dueDate); setInput(""); setDueDate(""); }}>ADD +</button>
+          <button
+            title="Pin to today's focus"
+            onClick={()=>setIsToday(v=>!v)}
+            style={{ padding:"8px 10px", border:`2px solid ${isToday?"var(--mint)":"var(--border-pixel)"}`, background:isToday?"var(--mint-light)":"var(--bg2)", cursor:"pointer", fontSize:14, borderRadius:0, boxShadow:isToday?"2px 2px 0px var(--mint)":"2px 2px 0px var(--border-pixel)", transition:"all 0.15s" }}
+          >📌</button>
+          <button className="btn btn-primary btn-sm" onClick={() => { addMainTodo(input, priority, dueDate, isToday); setInput(""); setDueDate(""); setIsToday(false); }}>ADD +</button>
         </div>
-        <div className="text-xs text-muted mt-1" style={{fontFamily:"var(--font-mono)"}}>// set a date/time for browser notifications when it's due!</div>
+        <div className="text-xs text-muted mt-1" style={{fontFamily:"var(--font-mono)"}}>
+          // {isToday ? "📌 will appear in today's focus on dashboard" : "click 📌 to pin this task to today's focus"} · set a time for browser notifications
+        </div>
       </div>
 
       <div className="card mb-3">
@@ -2144,6 +2279,11 @@ function TodosPage({ data, addMainTodo, toggleMainTodo, deleteMainTodo, addTodo,
               {t.dueDate && <div className={`todo-due ${isOverdue(t.dueDate) ? "overdue":""}`}>{isOverdue(t.dueDate) ? "⚠ Overdue · ":"📅 "}{fmtDateTime(t.dueDate)}</div>}
             </div>
             <span className={`badge badge-${t.priority}`}>{t.priority}</span>
+            <button
+              title={t.isToday ? "Remove from today's focus" : "Pin to today's focus"}
+              onClick={()=>toggleTodayFlag(t.id)}
+              style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, opacity:t.isToday?1:0.25, color:"var(--mint)", padding:"0 2px", transition:"opacity 0.15s" }}
+            >📌</button>
             <button className="todo-del" onClick={() => deleteMainTodo(t.id)}>×</button>
           </div>
         ))}
@@ -2677,61 +2817,190 @@ function ExtracurricularsPage({ data, update, saveData, toast }) {
 }
 
 // ─── TIMER PAGE ───────────────────────────────────────────────────────────────
-function TimerPage({ data, timerRunning, timerSec, timerSubject, setTimerSubject, startTimer, stopTimer, todaySessions, thisWeekSessions, todayTotal, thisWeekTotal, subjectTotals, maxSubjectTotal }) {
+function TimerPage({ data, timerRunning, timerSec, timerSubject, setTimerSubject, startTimer, stopTimer, todaySessions, thisWeekSessions, todayTotal, thisWeekTotal, subjectTotals, maxSubjectTotal, logStudyManual, toast }) {
   const subjectNames = Object.keys(data.subjects);
+  const [manualSubject, setManualSubject] = useState(subjectNames[0] || "");
+  const [manualLabel, setManualLabel] = useState("");
+  const [manualHours, setManualHours] = useState("");
+  const [manualMinutes, setManualMinutes] = useState("");
+  const [timerTab, setTimerTab] = useState("timer");
+
   return (
     <>
       <div className="page-title">STUDY TIMER ◷</div>
-      <div className="grid-2 mb-3">
-        <div className="card" style={{ textAlign:"center", borderTop:`3px solid ${timerRunning?"var(--pink)":"var(--border-pixel)"}` }}>
-          <div className="timer-display" style={{ color: timerRunning ? "var(--pink)" : "var(--text)", textShadow: timerRunning ? "3px 3px 0px var(--pink-hot)" : "3px 3px 0px var(--sand)" }}>
-            {String(Math.floor(timerSec/3600)).padStart(2,"0")}:{String(Math.floor((timerSec%3600)/60)).padStart(2,"0")}:{String(timerSec%60).padStart(2,"0")}
-          </div>
-          <div style={{ marginTop:16, marginBottom:16 }}>
-            <select value={timerSubject} onChange={(e) => setTimerSubject(e.target.value)} style={{ maxWidth:200, margin:"0 auto" }}>
-              {subjectNames.map(s => <option key={s}>{s}</option>)}
-            </select>
-          </div>
-          <div style={{ display:"flex", gap:12, justifyContent:"center" }}>
-            {!timerRunning
-              ? <button className="btn btn-primary" onClick={startTimer}>▶ START</button>
-              : <button className="btn btn-ghost" onClick={stopTimer} style={{ borderColor:"#ef4444", color:"#ef4444", boxShadow:"2px 2px 0px #ef4444" }}>⏹ STOP & LOG</button>
-            }
-          </div>
-        </div>
-        <div className="card">
-          <div className="card-title"><span className="card-title-dot" />STATS</div>
-          <div className="grid-2 mb-2">
-            <div className="stat-card" style={{ padding:14 }}>
-              <div className="stat-num" style={{ fontSize:22 }}>{fmtDuration(todayTotal) || "0m"}</div>
-              <div className="stat-label">Today</div>
-            </div>
-            <div className="stat-card" style={{ padding:14 }}>
-              <div className="stat-num" style={{ fontSize:22 }}>{fmtDuration(thisWeekTotal) || "0m"}</div>
-              <div className="stat-label">This Week</div>
-            </div>
-          </div>
-          {Object.entries(subjectTotals).sort((a,b) => b[1]-a[1]).map(([sub, sec]) => (
-            <div key={sub} className="bar-row">
-              <div className="bar-label">{sub}</div>
-              <div className="bar-track">
-                <div className="bar-fill" style={{ width:`${(sec/maxSubjectTotal)*100}%`, background:data.subjects[sub]?.color || "var(--pink)" }} />
-              </div>
-              <div className="bar-val">{fmtDuration(sec)}</div>
-            </div>
-          ))}
-        </div>
+
+      <div className="tabs" style={{ marginBottom:24 }}>
+        <button className={`tab ${timerTab==="timer"?"active":""}`} onClick={()=>setTimerTab("timer")}>⏱ Live Timer</button>
+        <button className={`tab ${timerTab==="manual"?"active":""}`} onClick={()=>setTimerTab("manual")}>✏ Log Manually</button>
+        <button className={`tab ${timerTab==="log"?"active":""}`} onClick={()=>setTimerTab("log")}>📋 Session Log</button>
       </div>
-      {todaySessions.length > 0 && (
-        <div className="card">
-          <div className="card-title"><span className="card-title-dot" />TODAY'S SESSIONS</div>
-          {todaySessions.map(s => (
-            <div key={s.id} className="session-log-item">
-              <span className="badge badge-med">{s.subject}</span>
-              <span className="text-muted text-sm" style={{fontFamily:"var(--font-mono)"}}>{new Date(s.ts).toLocaleTimeString("en-AU", { hour:"2-digit", minute:"2-digit" })}</span>
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:12 }}>{fmtTime(s.duration)}</span>
+
+      {timerTab === "timer" && (
+        <div className="grid-2 mb-3">
+          <div className="card" style={{ textAlign:"center", borderTop:`3px solid ${timerRunning?"var(--pink)":"var(--border-pixel)"}` }}>
+            <div className="timer-display" style={{ color: timerRunning ? "var(--pink)" : "var(--text)", textShadow: timerRunning ? "3px 3px 0px var(--pink-hot)" : "3px 3px 0px var(--sand)" }}>
+              {String(Math.floor(timerSec/3600)).padStart(2,"0")}:{String(Math.floor((timerSec%3600)/60)).padStart(2,"0")}:{String(timerSec%60).padStart(2,"0")}
             </div>
-          ))}
+            <div style={{ marginTop:16, marginBottom:16 }}>
+              <select value={timerSubject} onChange={(e) => setTimerSubject(e.target.value)} style={{ maxWidth:200, margin:"0 auto" }}>
+                {subjectNames.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{ display:"flex", gap:12, justifyContent:"center" }}>
+              {!timerRunning
+                ? <button className="btn btn-primary" onClick={startTimer}>▶ START</button>
+                : <button className="btn btn-ghost" onClick={stopTimer} style={{ borderColor:"#ef4444", color:"#ef4444", boxShadow:"2px 2px 0px #ef4444" }}>⏹ STOP & LOG</button>
+              }
+            </div>
+            {timerRunning && (
+              <div style={{ marginTop:14, fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>
+                // studying: <span style={{color:"var(--pink)"}}>{timerSubject}</span>
+              </div>
+            )}
+          </div>
+          <div className="card">
+            <div className="card-title"><span className="card-title-dot" />STATS</div>
+            <div className="grid-2 mb-2">
+              <div className="stat-card" style={{ padding:14 }}>
+                <div className="stat-num" style={{ fontSize:22 }}>{fmtDuration(todayTotal) || "0m"}</div>
+                <div className="stat-label">Today</div>
+              </div>
+              <div className="stat-card" style={{ padding:14 }}>
+                <div className="stat-num" style={{ fontSize:22 }}>{fmtDuration(thisWeekTotal) || "0m"}</div>
+                <div className="stat-label">This Week</div>
+              </div>
+            </div>
+            {Object.entries(subjectTotals).sort((a,b) => b[1]-a[1]).map(([sub, sec]) => (
+              <div key={sub} className="bar-row">
+                <div className="bar-label">{sub}</div>
+                <div className="bar-track">
+                  <div className="bar-fill" style={{ width:`${(sec/maxSubjectTotal)*100}%`, background:data.subjects[sub]?.color || "var(--pink)" }} />
+                </div>
+                <div className="bar-val">{fmtDuration(sec)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {timerTab === "manual" && (
+        <div className="grid-2 mb-3">
+          <div className="card" style={{ borderTop:"3px solid var(--cyan)" }}>
+            <div className="card-title"><span className="card-title-dot" style={{background:"var(--cyan)"}}/>LOG STUDY TIME MANUALLY ✏</div>
+            <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)", marginBottom:16 }}>
+              // forgot to start the timer? log time directly here
+            </div>
+
+            <div className="mb-2">
+              <div className="insight-label mb-1">SUBJECT</div>
+              <select value={manualSubject} onChange={e=>setManualSubject(e.target.value)} style={{ width:"100%" }}>
+                {subjectNames.map(s => <option key={s} value={s}>{s}</option>)}
+                <option value="General">General / Other</option>
+                <option value="Extracurriculars">Extracurriculars</option>
+              </select>
+            </div>
+
+            <div className="mb-2">
+              <div className="insight-label mb-1">WHAT DID YOU STUDY? <span style={{fontWeight:"normal",textTransform:"none",letterSpacing:0}}>(optional custom label)</span></div>
+              <input
+                type="text"
+                placeholder={`e.g. "${manualSubject} past papers", "Chapter 4 revision"…`}
+                value={manualLabel}
+                onChange={e=>setManualLabel(e.target.value)}
+              />
+            </div>
+
+            <div className="mb-3">
+              <div className="insight-label mb-1">DURATION</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                <div>
+                  <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)", marginBottom:4 }}>Hours</div>
+                  <input
+                    type="number"
+                    min="0" max="12"
+                    placeholder="0"
+                    value={manualHours}
+                    onChange={e=>setManualHours(e.target.value)}
+                    style={{ textAlign:"center", fontFamily:"var(--font-pixel)", fontSize:22 }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)", marginBottom:4 }}>Minutes</div>
+                  <input
+                    type="number"
+                    min="0" max="59"
+                    placeholder="0"
+                    value={manualMinutes}
+                    onChange={e=>setManualMinutes(e.target.value)}
+                    style={{ textAlign:"center", fontFamily:"var(--font-pixel)", fontSize:22 }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Preview */}
+            {(manualHours || manualMinutes) && (
+              <div style={{ padding:"10px 14px", background:"var(--cyan-light)", border:"2px solid var(--cyan)", marginBottom:14 }}>
+                <div style={{ fontFamily:"var(--font-pixel)", fontSize:11, color:"#006688" }}>
+                  ◷ Logging {manualHours||0}h {manualMinutes||0}m for <span style={{color:"var(--cyan)"}}>{manualLabel.trim() || manualSubject}</span>
+                </div>
+              </div>
+            )}
+
+            <button
+              className="btn btn-cyan w-full"
+              onClick={()=>{ logStudyManual(manualSubject, manualLabel, manualHours, manualMinutes); setManualLabel(""); setManualHours(""); setManualMinutes(""); }}
+            >
+              ✓ LOG THIS SESSION
+            </button>
+          </div>
+
+          <div className="card">
+            <div className="card-title"><span className="card-title-dot"/>STATS</div>
+            <div className="grid-2 mb-2">
+              <div className="stat-card" style={{ padding:14 }}>
+                <div className="stat-num" style={{ fontSize:22 }}>{fmtDuration(todayTotal) || "0m"}</div>
+                <div className="stat-label">Today</div>
+              </div>
+              <div className="stat-card" style={{ padding:14 }}>
+                <div className="stat-num" style={{ fontSize:22 }}>{fmtDuration(thisWeekTotal) || "0m"}</div>
+                <div className="stat-label">This Week</div>
+              </div>
+            </div>
+            {Object.entries(subjectTotals).sort((a,b) => b[1]-a[1]).map(([sub, sec]) => (
+              <div key={sub} className="bar-row">
+                <div className="bar-label">{sub}</div>
+                <div className="bar-track">
+                  <div className="bar-fill" style={{ width:`${(sec/maxSubjectTotal)*100}%`, background:data.subjects[sub]?.color || "var(--pink)" }} />
+                </div>
+                <div className="bar-val">{fmtDuration(sec)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {timerTab === "log" && (
+        <div className="card">
+          <div className="card-title"><span className="card-title-dot"/>SESSION LOG 📋</div>
+          {todaySessions.length === 0 ? (
+            <div className="text-sm text-muted" style={{fontFamily:"var(--font-mono)"}}>// no sessions logged today yet</div>
+          ) : (
+            <>
+              <div style={{ fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--muted)", letterSpacing:"0.1em", marginBottom:10 }}>TODAY</div>
+              {[...todaySessions].reverse().map(s => (
+                <div key={s.id} className="session-log-item">
+                  <span className="badge badge-med" style={{ background: data.subjects[s.subject]?.color+"22", borderColor: data.subjects[s.subject]?.color, color: data.subjects[s.subject]?.color }}>{s.subject}</span>
+                  {s.label && s.label !== s.subject && (
+                    <span style={{ fontFamily:"var(--font-body)", fontSize:12, color:"var(--text-soft)", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.label}</span>
+                  )}
+                  {s.manual && <span style={{ fontFamily:"var(--font-pixel)", fontSize:8, color:"var(--cyan)", border:"1px solid var(--cyan)", padding:"1px 5px" }}>MANUAL</span>}
+                  <span className="text-muted text-sm" style={{fontFamily:"var(--font-mono)"}}>{new Date(s.ts).toLocaleTimeString("en-AU", { hour:"2-digit", minute:"2-digit" })}</span>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:12 }}>{fmtTime(s.duration)}</span>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </>
