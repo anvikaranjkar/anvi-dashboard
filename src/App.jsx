@@ -42,11 +42,14 @@ const DEFAULT_DATA = {
 
 // ─── UTILITIES ──────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 9);
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+};
 const weekStart = () => {
   const d = new Date();
   d.setDate(d.getDate() - d.getDay() + 1);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 };
 const fmtTime = (sec) => {
   const h = Math.floor(sec / 3600);
@@ -1395,6 +1398,25 @@ export default function App() {
     document.body.classList.toggle("dark-mode", darkMode);
   }, [darkMode]);
 
+  // ── Midnight rollover: clear isToday flag from undone todos each new day ─────
+  useEffect(() => {
+    const checkRollover = () => {
+      const nowDay = today();
+      const lastDay = localStorage.getItem("anvi_last_day");
+      if (lastDay && lastDay !== nowDay) {
+        // New day — strip isToday from any undone todos (they stay in General, just no longer "today")
+        const d = JSON.parse(JSON.stringify(data));
+        let changed = false;
+        (d.mainTodos || []).forEach(t => { if (t.isToday && !t.done) { t.isToday = false; changed = true; } });
+        if (changed) saveData(d);
+      }
+      localStorage.setItem("anvi_last_day", nowDay);
+    };
+    checkRollover();
+    const id = setInterval(checkRollover, 60000); // check every minute
+    return () => clearInterval(id);
+  }, []); // eslint-disable-line
+
   const toggleNotif = async () => {
     if (!notifEnabled) {
       if ("Notification" in window) {
@@ -1473,9 +1495,9 @@ export default function App() {
     { id: "extracurriculars", icon: "◆", label: "Work & Extras" },
     { id: "countdowns", icon: "⏳", label: "Countdowns" },
     { id: "timer", icon: "◷", label: "Study Timer" },
-    { id: "study-cal", icon: "📅", label: "Study Calendar" },
-    { id: "habits", icon: "🔥", label: "Habit Tracker" },
-    { id: "widgets", icon: "🖼", label: "My Widgets" },
+    { id: "study-cal", icon: "◫", label: "Study Calendar" },
+    { id: "habits", icon: "◌", label: "Habit Tracker" },
+    { id: "widgets", icon: "▣", label: "My Widgets" },
     { id: "resources", icon: "⊞", label: "Resources" },
     { id: "settings", icon: "⚙", label: "Settings" },
   ];
@@ -1558,14 +1580,6 @@ export default function App() {
             <div className="hero-content">
               <div className="hero-greeting">HELLO, {(data.settings?.name || "ANVI").toUpperCase()} ✦</div>
               <div className="hero-date">// {dateStr.toUpperCase()} //</div>
-              <div className="hero-badges">
-                <span className="hero-badge" style={{ borderColor:"#ef4444", color:"#FF8888" }}>🔴 {urgentCount} URGENT</span>
-                <span className="hero-badge" style={{ borderColor:"var(--yellow-bright)", color:"var(--yellow)" }}>◈ {mainPendingCount} TO-DOS</span>
-                <span className="hero-badge" style={{ borderColor:"var(--cyan)", color:"var(--cyan)" }}>◷ {fmtDuration(thisWeekTotal) || "0m"} THIS WEEK</span>
-                {upcomingCountdowns.length > 0 && (
-                  <span className="hero-badge" style={{ borderColor:"var(--mint)", color:"var(--mint)" }}>⏳ {daysUntil(upcomingCountdowns[0].date)}D — {upcomingCountdowns[0].title.toUpperCase()}</span>
-                )}
-              </div>
             </div>
             <button
               className="btn btn-ghost btn-sm"
@@ -1714,30 +1728,46 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
             <button className={`dash-tab ${dashTab==="overview" ? "active-pink" : ""}`} onClick={() => setDashTab("overview")}>✦ Overview</button>
             <button className={`dash-tab ${dashTab==="subjects" ? "active-pink" : ""}`} onClick={() => setDashTab("subjects")}>◉ Subjects</button>
             <button className={`dash-tab ${dashTab==="extras" ? "active-cyan" : ""}`} onClick={() => setDashTab("extras")}>◆ Extras</button>
-            <button className={`dash-tab ${dashTab==="widgets" ? "active-yellow" : ""}`} onClick={() => setDashTab("widgets")}>🖼 Widgets</button>
+            <button className={`dash-tab ${dashTab==="widgets" ? "active-yellow" : ""}`} onClick={() => setDashTab("widgets")}>▣ Widgets</button>
           </div>
 
           {/* OVERVIEW TAB */}
           {dashTab === "overview" && (
             <>
+              {/* WIDGETS — front and centre */}
+              {dashWidgets.length > 0 && (
+                <div className="card mb-3" style={{ borderTop:"3px solid var(--purple)", padding:"14px 16px" }}>
+                  <div className="card-title" style={{ justifyContent:"space-between", marginBottom:12 }}>
+                    <span style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <span className="card-title-dot" style={{background:"var(--purple)"}}/>MY WIDGETS
+                    </span>
+                    <button onClick={() => setTab("widgets")} style={{ fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--purple)", background:"none", border:"none", cursor:"pointer", letterSpacing:"0.06em" }}>VIEW ALL →</button>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(110px, 1fr))", gap:8 }}>
+                    {dashWidgets.slice(0, 8).map(w => (
+                      <div key={w.id} style={{ position:"relative", border:"2px solid var(--border-pixel)", boxShadow:"2px 2px 0px var(--border-pixel)" }}>
+                        <img src={w.url} alt={w.caption||"widget"} style={{ width:"100%", aspectRatio:"1", objectFit:"cover", display:"block" }} onError={e=>{e.target.style.background="var(--sand)";e.target.style.minHeight="80px";}} />
+                        {w.caption && <div style={{ position:"absolute", bottom:0, left:0, right:0, background:"rgba(0,0,0,0.6)", padding:"3px 6px", fontFamily:"var(--font-pixel)", fontSize:8, color:"white", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{w.caption}</div>}
+                      </div>
+                    ))}
+                    {dashWidgets.length > 8 && (
+                      <div onClick={() => setTab("widgets")} style={{ aspectRatio:"1", border:"2px dashed var(--border-pixel)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", background:"var(--bg2)", gap:4 }}>
+                        <div style={{ fontFamily:"var(--font-pixel)", fontSize:18, color:"var(--muted)" }}>+{dashWidgets.length-8}</div>
+                        <div style={{ fontFamily:"var(--font-pixel)", fontSize:8, color:"var(--muted)" }}>more</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {dashWidgets.length === 0 && (
+                <div onClick={() => setTab("widgets")} className="card mb-3" style={{ borderTop:"3px dashed var(--border-pixel)", padding:"20px", cursor:"pointer", textAlign:"center", background:"var(--bg2)" }}>
+                  <div style={{ fontFamily:"var(--font-pixel)", fontSize:12, color:"var(--muted)", marginBottom:6 }}>▣ MY WIDGETS</div>
+                  <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>// no widgets yet — click to add images ✦</div>
+                </div>
+              )}
               <div className="grid-2 mb-3">
                 <div className="card">
-                  <div className="card-title"><span className="card-title-dot" style={{ background:"#ef4444" }} />URGENT TASKS 🔴</div>
-                  {urgentTodos.length === 0
-                    ? <div className="text-sm text-muted" style={{fontFamily:"var(--font-mono)"}}>// no urgent tasks — you're crushing it 🎉</div>
-                    : urgentTodos.slice(0, 6).map((t) => (
-                        <div key={t.id} className="todo-item">
-                          <span className="badge badge-high">{t.subject}</span>
-                          <div className="todo-body">
-                            <div className="todo-text">{t.text}</div>
-                            {t.dueDate && <div className="todo-due">{fmtDateTime(t.dueDate)}</div>}
-                          </div>
-                        </div>
-                      ))
-                  }
-                </div>
-                <div className="card">
-                  <div className="card-title"><span className="card-title-dot" style={{ background:"var(--purple)" }} />COMING UP 📅</div>
+                  <div className="card-title"><span className="card-title-dot" style={{ background:"var(--purple)" }} />COMING UP</div>
                   {upcomingTodos.length === 0
                     ? <div className="text-sm text-muted" style={{fontFamily:"var(--font-mono)"}}>// no scheduled tasks — add due dates!</div>
                     : upcomingTodos.map((t) => (
@@ -1751,21 +1781,27 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
                       ))
                   }
                 </div>
-              </div>
-              {Object.keys(subjectTotals).length > 0 && (
-                <div className="card">
-                  <div className="card-title"><span className="card-title-dot" style={{ background:"var(--blue)" }} />THIS WEEK BY SUBJECT</div>
-                  {Object.entries(subjectTotals).sort((a, b) => b[1] - a[1]).map(([sub, sec]) => (
-                    <div key={sub} className="bar-row">
-                      <div className="bar-label">{sub}</div>
-                      <div className="bar-track">
-                        <div className="bar-fill" style={{ width:`${(sec/maxSubjectTotal)*100}%`, background:data.subjects[sub]?.color || "var(--pink)" }} />
+                {Object.keys(subjectTotals).length > 0 ? (
+                  <div className="card">
+                    <div className="card-title"><span className="card-title-dot" style={{ background:"var(--blue)" }} />THIS WEEK BY SUBJECT</div>
+                    {Object.entries(subjectTotals).sort((a, b) => b[1] - a[1]).map(([sub, sec]) => (
+                      <div key={sub} className="bar-row">
+                        <div className="bar-label">{sub}</div>
+                        <div className="bar-track">
+                          <div className="bar-fill" style={{ width:`${(sec/maxSubjectTotal)*100}%`, background:data.subjects[sub]?.color || "var(--pink)" }} />
+                        </div>
+                        <div className="bar-val">{fmtDuration(sec)}</div>
                       </div>
-                      <div className="bar-val">{fmtDuration(sec)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                ) : (
+                  <div className="card">
+                    <div className="card-title"><span className="card-title-dot" style={{ background:"var(--blue)" }} />THIS WEEK</div>
+                    <div className="text-sm text-muted" style={{fontFamily:"var(--font-mono)"}}>// no study time logged this week yet</div>
+                    <button className="btn btn-ghost btn-sm mt-2" onClick={() => setTab("timer")}>Start Studying →</button>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
@@ -1987,7 +2023,7 @@ function DashboardPage({ data, todayTotal, thisWeekTotal, todaySessions, subject
           {dashWidgets.length > 0 && (
             <div className="card" style={{ borderTop:"3px solid var(--purple)", padding:"14px" }}>
               <div className="card-title" style={{ marginBottom:10, fontSize:12, justifyContent:"space-between" }}>
-                <span style={{display:"flex",alignItems:"center",gap:8}}><span className="card-title-dot" style={{background:"var(--purple)"}}/>MY WIDGETS 🖼</span>
+                <span style={{display:"flex",alignItems:"center",gap:8}}><span className="card-title-dot" style={{background:"var(--purple)"}}/>MY WIDGETS ▣</span>
                 <button onClick={()=>setTab("widgets")} style={{ fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--purple)", background:"none", border:"none", cursor:"pointer" }}>VIEW ALL →</button>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
@@ -2475,7 +2511,7 @@ function SubjectsPage({ data, subjectView, setSubjectView, addTodo, toggleTodo, 
               <button key={t} className={`subject-inner-tab ${innerTab===t?"active":""}`} onClick={() => setInnerTab(t)}
                 style={innerTab===t ? { color:s.color } : {}}
               >
-                {{ todos:"◈ Tasks", insights:"💡 Insights", notes:"📝 Notes", links:"🔗 Links", countdowns:"⏳ Countdowns", exercises:"📐 Exercises" }[t]}
+                {{ todos:"◈ Tasks", insights:"◎ Insights", notes:"◌ Notes", links:"◆ Links", countdowns:"⏳ Countdowns", exercises:"◫ Exercises" }[t]}
               </button>
             ))}
           </div>
@@ -2815,7 +2851,7 @@ function TimerPage({ data, timerRunning, timerSec, timerSubject, setTimerSubject
       <div className="tabs" style={{ marginBottom:24 }}>
         <button className={`tab ${timerTab==="timer"?"active":""}`} onClick={()=>setTimerTab("timer")}>⏱ Live Timer</button>
         <button className={`tab ${timerTab==="manual"?"active":""}`} onClick={()=>setTimerTab("manual")}>✏ Log Manually</button>
-        <button className={`tab ${timerTab==="log"?"active":""}`} onClick={()=>setTimerTab("log")}>📋 Session Log</button>
+        <button className={`tab ${timerTab==="log"?"active":""}`} onClick={()=>setTimerTab("log")}>◌ Session Log</button>
       </div>
 
       {timerTab === "timer" && (
@@ -2965,7 +3001,7 @@ function TimerPage({ data, timerRunning, timerSec, timerSubject, setTimerSubject
 
       {timerTab === "log" && (
         <div className="card">
-          <div className="card-title"><span className="card-title-dot"/>SESSION LOG 📋</div>
+          <div className="card-title"><span className="card-title-dot"/>SESSION LOG ◌</div>
           {todaySessions.length === 0 ? (
             <div className="text-sm text-muted" style={{fontFamily:"var(--font-mono)"}}>// no sessions logged today yet</div>
           ) : (
@@ -3047,7 +3083,7 @@ function ResourcesPage({ data, saveData, update, toast }) {
     <>
       <div className="page-title">RESOURCES ⊞</div>
       <div className="tabs">
-        {[{ key:"bookmarks", label:"🔖 Bookmarks" }, { key:"notes", label:"📝 Quick Notes" }, { key:"vision", label:"🌅 Vision Board" }].map(t => (
+        {[{ key:"bookmarks", label:"◈ Bookmarks" }, { key:"notes", label:"◎ Quick Notes" }, { key:"vision", label:"◫ Vision Board" }].map(t => (
           <button key={t.key} className={`tab ${resTab===t.key?"active":""}`} onClick={() => setResTab(t.key)}>{t.label}</button>
         ))}
       </div>
@@ -3085,17 +3121,13 @@ function ResourcesPage({ data, saveData, update, toast }) {
       {resTab === "vision" && (
         <>
           <div className="card mb-3" style={{ borderTop:"3px solid var(--purple)" }}>
-            <div className="card-title"><span className="card-title-dot" style={{background:"var(--purple)"}}/>VISION BOARD 🌅</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:8, marginBottom:10 }}>
-              <input type="url" placeholder="Or paste image URL…" value={visionUrl} onChange={(e) => setVisionUrl(e.target.value)} onKeyDown={(e) => e.key==="Enter" && addVisionImage()} />
-              <button className="btn btn-primary btn-sm" onClick={addVisionImage}>ADD URL</button>
-            </div>
-            <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => visionFileRef.current?.click()} style={{ borderColor:"var(--purple)", color:"var(--purple)" }}>
-                📁 Upload Images (multiple)
+            <div className="card-title"><span className="card-title-dot" style={{background:"var(--purple)"}}/>VISION BOARD ◫</div>
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <button className="btn btn-primary" onClick={() => visionFileRef.current?.click()}>
+                + UPLOAD IMAGES
               </button>
               <input ref={visionFileRef} type="file" accept="image/*" multiple style={{ display:"none" }} onChange={addVisionFile} />
-              <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>// jpg, png, gif, webp supported · select multiple!</div>
+              <div style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>// jpg, png, gif, webp · select multiple at once</div>
             </div>
           </div>
           <div className="vision-grid">
@@ -3107,14 +3139,13 @@ function ResourcesPage({ data, saveData, update, toast }) {
               </div>
             ))}
             <div className="vision-add" onClick={() => visionFileRef.current?.click()}>
-              <span style={{ fontSize:28 }}>📸</span>
-              <span>Upload / Add</span>
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:9, opacity:0.7 }}>click to browse</span>
+              <span style={{ fontSize:24 }}>+</span>
+              <span>Upload</span>
             </div>
           </div>
           {(data.visionBoard || []).length === 0 && (
             <div style={{ textAlign:"center", padding:"40px 0", fontFamily:"var(--font-mono)", fontSize:11, color:"var(--muted)" }}>
-              // your vision board is empty — upload images or paste URLs above to manifest your goals ✦
+              // your vision board is empty — upload images above to manifest your goals ✦
             </div>
           )}
         </>
@@ -3250,7 +3281,7 @@ function StudyCalendarPage({ data }) {
 
   return (
     <>
-      <div className="page-title">STUDY CALENDAR 📅</div>
+      <div className="page-title">STUDY CALENDAR ◫</div>
 
       {/* HEATMAP */}
       <div className="card mb-3" style={{ borderTop:"3px solid var(--pink)" }}>
@@ -3446,7 +3477,7 @@ function HabitTrackerPage({ data, saveData, toast }) {
   return (
     <>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-        <div className="page-title">HABIT TRACKER 🔥</div>
+        <div className="page-title">HABIT TRACKER ◌</div>
         <button className="btn btn-primary btn-sm" onClick={()=>setShowAdd(v=>!v)}>
           {showAdd ? "✕ CANCEL" : "+ NEW HABIT"}
         </button>
@@ -3628,19 +3659,10 @@ function HabitTrackerPage({ data, saveData, toast }) {
 
 // ─── WIDGETS PAGE ─────────────────────────────────────────────────────────────
 function WidgetsPage({ data, saveData, toast }) {
-  const [imgUrl, setImgUrl] = useState("");
-  const [imgCaption, setImgCaption] = useState("");
-  const [layout, setLayout] = useState("masonry");
+  const [layout, setLayout] = useState("grid4");
   const fileRef = useRef(null);
   const widgets = data.dashWidgets || [];
 
-  const addUrl = () => {
-    if (!imgUrl.trim()) return;
-    const newData = JSON.parse(JSON.stringify(data));
-    newData.dashWidgets = [...(newData.dashWidgets||[]), { id:uid(), url:imgUrl, caption:imgCaption }];
-    saveData(newData); setImgUrl(""); setImgCaption("");
-    toast("🖼 Widget added!");
-  };
   const addFile = (e) => {
     const files = Array.from(e.target.files||[]);
     if (!files.length) return;
@@ -3651,7 +3673,7 @@ function WidgetsPage({ data, saveData, toast }) {
         const newData = JSON.parse(JSON.stringify(data));
         newData.dashWidgets = [...(newData.dashWidgets||[]), { id:uid(), url:ev.target.result, caption:"" }];
         saveData(newData); done++;
-        if (done===files.length) toast(`🖼 ${done} image${done>1?"s":""} added!`);
+        if (done===files.length) toast(`▣ ${done} image${done>1?"s":""} added!`);
       };
       reader.readAsDataURL(file);
     });
@@ -3670,78 +3692,80 @@ function WidgetsPage({ data, saveData, toast }) {
   };
 
   const LAYOUTS = [
-    { id:"masonry", label:"Masonry" },
     { id:"grid2", label:"2-col" },
     { id:"grid3", label:"3-col" },
     { id:"grid4", label:"4-col" },
-    { id:"large", label:"Large" },
+    { id:"grid5", label:"5-col" },
+    { id:"masonry", label:"Masonry" },
   ];
 
   const gridStyle = {
-    masonry: { columns:"3 200px", gap:12 },
     grid2: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 },
     grid3: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 },
     grid4: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12 },
-    large: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 },
+    grid5: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr", gap:10 },
+    masonry: { columns:"4 160px", gap:10 },
   }[layout];
 
   return (
     <>
-      <div className="page-title">MY WIDGETS 🖼</div>
+      <div className="page-title">MY WIDGETS ▣</div>
 
-      {/* ADD PANEL */}
+      {/* UPLOAD PANEL */}
       <div className="card mb-3" style={{ borderTop:"3px solid var(--yellow-bright)" }}>
-        <div className="card-title"><span className="card-title-dot" style={{background:"var(--yellow)"}}/>ADD IMAGE WIDGET</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:10, marginBottom:10 }}>
-          <input type="url" placeholder="Paste image URL…" value={imgUrl} onChange={e=>setImgUrl(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addUrl()} />
-          <input type="text" placeholder="Caption (optional)" value={imgCaption} onChange={e=>setImgCaption(e.target.value)} />
-          <button className="btn btn-yellow btn-sm" onClick={addUrl}>ADD URL</button>
-        </div>
+        <div className="card-title"><span className="card-title-dot" style={{background:"var(--yellow)"}}/>UPLOAD IMAGES</div>
         <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-          <button className="btn btn-ghost btn-sm" onClick={()=>fileRef.current?.click()} style={{ borderColor:"var(--yellow-bright)", color:"var(--yellow)" }}>
-            📁 Upload Images (multiple)
+          <button
+            className="btn btn-primary"
+            onClick={()=>fileRef.current?.click()}
+            style={{ letterSpacing:"0.06em" }}
+          >
+            + UPLOAD IMAGES
           </button>
           <input ref={fileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={addFile} />
-          <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>// select multiple files at once · jpg, png, gif, webp</span>
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--muted)" }}>
+            // select multiple at once · jpg, png, gif, webp supported
+          </span>
         </div>
       </div>
 
       {/* LAYOUT SWITCHER */}
-      {widgets.length > 0 && (
-        <div style={{ display:"flex", gap:8, marginBottom:20, alignItems:"center" }}>
-          <span style={{ fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--muted)", marginRight:4 }}>LAYOUT:</span>
-          {LAYOUTS.map(l => (
-            <button key={l.id} onClick={()=>setLayout(l.id)} style={{ fontFamily:"var(--font-pixel)", fontSize:10, padding:"4px 10px", border: layout===l.id?"2px solid var(--pink)":"2px solid var(--border-pixel)", background: layout===l.id?"var(--pink-light)":"var(--bg2)", color: layout===l.id?"var(--pink)":"var(--text)", cursor:"pointer", boxShadow: layout===l.id?"2px 2px 0px var(--pink)":"2px 2px 0px var(--border-pixel)" }}>
-              {l.label}
-            </button>
-          ))}
-          <span style={{ marginLeft:"auto", fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--muted)" }}>{widgets.length} widget{widgets.length!==1?"s":""}</span>
-        </div>
-      )}
+      <div style={{ display:"flex", gap:8, marginBottom:20, alignItems:"center" }}>
+        <span style={{ fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--muted)", marginRight:4 }}>LAYOUT:</span>
+        {LAYOUTS.map(l => (
+          <button key={l.id} onClick={()=>setLayout(l.id)} style={{ fontFamily:"var(--font-pixel)", fontSize:10, padding:"4px 10px", border: layout===l.id?"2px solid var(--pink)":"2px solid var(--border-pixel)", background: layout===l.id?"var(--pink-light)":"var(--bg2)", color: layout===l.id?"var(--pink)":"var(--text)", cursor:"pointer", boxShadow: layout===l.id?"2px 2px 0px var(--pink)":"2px 2px 0px var(--border-pixel)" }}>
+            {l.label}
+          </button>
+        ))}
+        <span style={{ marginLeft:"auto", fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--muted)" }}>{widgets.length} image{widgets.length!==1?"s":""}</span>
+      </div>
 
       {widgets.length === 0 ? (
-        <div style={{ textAlign:"center", padding:"80px 0", fontFamily:"var(--font-mono)", fontSize:12, color:"var(--muted)" }}>
-          <div style={{ fontSize:48, marginBottom:16 }}>🖼</div>
-          // no widgets yet<br/>// upload images or paste URLs above to fill this space ✦
+        <div
+          onClick={()=>fileRef.current?.click()}
+          style={{ textAlign:"center", padding:"80px 0", fontFamily:"var(--font-mono)", fontSize:12, color:"var(--muted)", cursor:"pointer", border:"2px dashed var(--border-pixel)", background:"var(--bg2)" }}
+        >
+          <div style={{ fontFamily:"var(--font-pixel)", fontSize:28, color:"var(--border-pixel)", marginBottom:16 }}>▣</div>
+          // no images yet — click to upload ✦
         </div>
       ) : (
         <div style={gridStyle}>
           {widgets.map(w => (
-            <div key={w.id} style={{ breakInside:"avoid", marginBottom: layout==="masonry"?12:0, position:"relative", border:"2px solid var(--border-pixel)", boxShadow:"3px 3px 0px var(--border-pixel)" }}>
+            <div key={w.id} style={{ breakInside:"avoid", marginBottom: layout==="masonry"?10:0, position:"relative", border:"2px solid var(--border-pixel)", boxShadow:"3px 3px 0px var(--border-pixel)" }}>
               <img
                 src={w.url} alt={w.caption||"widget"}
-                style={{ width:"100%", display:"block", objectFit:"cover", aspectRatio: layout==="large"?"4/3":layout==="masonry"?"auto":"1" }}
-                onError={e=>{e.target.style.background="var(--sand)";e.target.style.minHeight="120px";}}
+                style={{ width:"100%", display:"block", objectFit:"cover", aspectRatio:"1" }}
+                onError={e=>{e.target.style.background="var(--sand)";e.target.style.minHeight="100px";}}
               />
-              <div style={{ padding:"8px 10px", display:"flex", alignItems:"center", gap:8, background:"var(--bg2)", borderTop:"1px solid var(--border)" }}>
+              <div style={{ padding:"6px 8px", display:"flex", alignItems:"center", gap:6, background:"var(--bg2)", borderTop:"1px solid var(--border)" }}>
                 <input
                   type="text"
-                  placeholder="Add caption…"
+                  placeholder="Caption…"
                   value={w.caption||""}
                   onChange={e=>updateCaption(w.id,e.target.value)}
-                  style={{ flex:1, border:"none", background:"transparent", fontFamily:"var(--font-pixel)", fontSize:10, color:"var(--text-soft)", padding:0, outline:"none" }}
+                  style={{ flex:1, border:"none", background:"transparent", fontFamily:"var(--font-pixel)", fontSize:9, color:"var(--text-soft)", padding:0, outline:"none" }}
                 />
-                <button onClick={()=>removeWidget(w.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--muted)", fontSize:16, padding:"0 4px", flexShrink:0, opacity:0.6 }}>×</button>
+                <button onClick={()=>removeWidget(w.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--muted)", fontSize:16, padding:"0 2px", flexShrink:0, opacity:0.6 }}>×</button>
               </div>
             </div>
           ))}
