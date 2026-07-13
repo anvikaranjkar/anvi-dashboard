@@ -98,6 +98,7 @@ img { display: block; max-width: 100%; }
 .todo-row.done .todo-text { color: #999; text-decoration: line-through; }
 .due-chip { flex: 0 0 auto; padding: 3px 7px; border-radius: 20px; background: #e8eef8; color: #50658e; font-size: 8px; font-weight: 750; letter-spacing: .02em; }
 .due-chip.overdue { background: #f6ced5; color: #9b384d; }
+.reminder-chip { background: #eee8fa; color: #6f5ca5; }
 .check { width: 20px; height: 20px; padding: 0; border: 1px solid #9fa2aa; border-radius: 6px; background: white; font-size: 11px; }
 .done .check { border-color: var(--ink); background: var(--ink); color: white; }
 .priority { appearance: none; min-width: 44px; padding: 4px 7px; border: 0; border-radius: 20px; text-align: center; text-transform: uppercase; font-size: 8px; font-weight: 750; letter-spacing: .05em; }
@@ -296,11 +297,24 @@ img { display: block; max-width: 100%; }
 .setting-row { padding-top: 20px; display: flex; justify-content: space-between; align-items: center; }
 .setting-row strong, .setting-row small { display: block; }
 .setting-row small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.notification-card .setting-row + .setting-row { margin-top: 14px; border-top: 1px solid #ecebe6; }
+.morning-time { grid-template-columns: 1fr 118px !important; align-items: center; margin-top: 16px !important; }
+.morning-time input { grid-column: 2 !important; padding-block: 8px; }
+.test-notification { margin-top: 14px; }
 .toggle { width: 46px; height: 26px; padding: 3px; border: 1px solid #aaa; border-radius: 30px; background: #e6e5e0; }
 .toggle i { display: block; width: 18px; height: 18px; border-radius: 50%; background: white; border: 1px solid #999; transition: .2s ease; }
 .toggle.on { background: var(--green); border-color: #47885a; }
 .toggle.on i { transform: translateX(19px); border-color: #47885a; }
 .backup-actions { display: flex; gap: 8px; }
+.install-step { min-height: 70px; padding: 13px 0; display: grid; grid-template-columns: 58px 1fr; gap: 12px; align-items: center; border-top: 1px solid #ecebe6; }
+.install-step > span { width: 54px; height: 37px; display: grid; place-items: center; border: 1px solid var(--ink); border-radius: 10px; background: var(--lavender); font: 600 11px var(--serif); }
+.install-step:nth-of-type(3) > span { background: var(--blue); }
+.install-step strong, .install-step small { display: block; }
+.install-step strong { font-size: 10px; }
+.install-step small { margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.widget-note { margin-top: 10px; padding: 13px; border-radius: 10px; background: #f4f3ee; }
+.widget-note strong { font: 600 15px var(--serif); }
+.widget-note p { margin: 5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .settings-card details { margin-top: 14px; }
 .settings-card summary { color: var(--muted); font-size: 10px; cursor: pointer; }
 .settings-card details textarea { width: 100%; min-height: 290px; margin-top: 10px; padding: 12px; border: 1px solid #ccc; border-radius: 9px; background: #242831; color: #e7e7e7; font: 10px/1.45 ui-monospace, monospace; }

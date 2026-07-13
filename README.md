@@ -10,6 +10,8 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 - Overall todos grouped by subject, including required Maths exercises
 - Optional todo completion dates with a monthly due-date calendar
 - Simple upcoming meeting planner with date, time and details
+- Installable web app for iPhone and Mac with native-style notification support
+- Timed todo reminders, 15-minute meeting alerts and a configurable morning summary
 - Goals by time horizon, live countdowns, bookmarks, notes and image boards
 - Automatic Supabase sync for cross-device data and image storage
 - JSON export/import backup

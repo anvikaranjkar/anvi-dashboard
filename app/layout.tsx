@@ -13,6 +13,10 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase,
     title,
     description,
+    applicationName: "Anvi’s Dashboard",
+    manifest: "/manifest.webmanifest",
+    icons: { icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }, { url: "/icon-512.png", sizes: "512x512", type: "image/png" }], apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] },
+    appleWebApp: { capable: true, statusBarStyle: "default", title: "Anvi’s Dashboard" },
     openGraph: { title, description, type: "website", images: [{ url: "/og-anvis-dashboard.png", width: 1200, height: 630, alt: "Anvi’s personal study dashboard" }] },
     twitter: { card: "summary_large_image", title, description, images: ["/og-anvis-dashboard.png"] },
   };

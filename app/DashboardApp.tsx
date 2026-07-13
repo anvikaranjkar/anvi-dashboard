@@ -24,6 +24,7 @@ type AppData = {
   dashboardImages: ImageItem[];
   studySessions: StudySession[];
   meetings: Meeting[];
+  notificationSettings: { morningSummary: boolean; morningTime: string };
 };
 
 const uid = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -71,6 +72,7 @@ const starter: AppData = {
   dashboardImages: [{ id: "d1", url: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=900&q=80", caption: "This week’s mood" }],
   studySessions: [],
   meetings: [],
+  notificationSettings: { morningSummary: true, morningTime: "07:30" },
 };
 
 const nav: { id: Tab; label: string; icon: string }[] = [
@@ -82,11 +84,13 @@ const horizons = { week: "This Week", term: "This Term", sixMonths: "Next Six Mo
 const swatches = ["#f2b8c6", "#a8c7fa", "#b8ddc0", "#c7b8ee", "#f6cf9e", "#d7dfa5", "#f0b7e3"];
 const STORAGE_KEY = "anvis-dashboard-data";
 const LEGACY_STORAGE_KEY = "daydream-desk-data";
+const NOTIFICATION_LOG_KEY = "anvis-dashboard-notification-log";
+const MORNING_SENT_KEY = "anvis-dashboard-morning-summary";
 const SUPABASE_URL = "https://iiwjnqfbhzfzwzvccapc.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlpd2pucWZiaHpmend6dmNjYXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4Njk2NTEsImV4cCI6MjA5NDQ0NTY1MX0.PX4XXr9fxtZHqN-hq5iwvkOV3-oYULXi459Zcis6h9Y";
 
 function mergeData(value: Partial<AppData>): AppData {
-  return { ...starter, ...value, profile: { ...starter.profile, ...(value.profile || {}) }, goals: { ...starter.goals, ...(value.goals || {}) } };
+  return { ...starter, ...value, profile: { ...starter.profile, ...(value.profile || {}) }, goals: { ...starter.goals, ...(value.goals || {}) }, notificationSettings: { ...starter.notificationSettings, ...(value.notificationSettings || {}) } };
 }
 
 export default function DashboardApp() {
@@ -109,7 +113,8 @@ export default function DashboardApp() {
     const cached = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
     let initial = starter;
     if (cached) { try { initial = mergeData(JSON.parse(cached)); setData(initial); } catch {} }
-    setNotifications(Notification?.permission === "granted");
+    setNotifications("Notification" in window && Notification.permission === "granted");
+    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js");
     setHydrated(true);
     void loadCloud(initial);
   }, []);
@@ -132,10 +137,50 @@ export default function DashboardApp() {
 
   useEffect(() => {
     if (!hydrated) return;
-    const due = [...data.overallTodos, ...data.subjects.flatMap(s => [...s.todos, ...(s.exercises || [])])]
-      .find(t => !t.done && t.reminder && new Date(t.reminder).getTime() <= now && new Date(t.reminder).getTime() > now - 2000);
-    if (due) notify(`Reminder: ${due.text}`);
-  }, [now]);
+    function checkReminders() {
+      const sent = new Set<string>();
+      try { JSON.parse(localStorage.getItem(NOTIFICATION_LOG_KEY) || "[]").forEach((id: string) => sent.add(id)); } catch {}
+      let changed = false;
+      allTodos(data).filter(todo => !todo.done && todo.reminder && new Date(todo.reminder).getTime() <= Date.now()).forEach(todo => {
+        const key = `todo-${todo.id}-${todo.reminder}`;
+        if (sent.has(key)) return;
+        notify(`Reminder: ${todo.text}`, key); sent.add(key); changed = true;
+      });
+      data.meetings.forEach(meeting => {
+        const until = new Date(meeting.startsAt).getTime() - Date.now();
+        const key = `meeting-${meeting.id}-${meeting.startsAt}`;
+        if (until <= 0 || until > 15 * 60 * 1000 || sent.has(key)) return;
+        notify(`${meeting.title} starts in ${Math.max(1, Math.ceil(until / 60000))} minutes`, key); sent.add(key); changed = true;
+      });
+      if (changed) localStorage.setItem(NOTIFICATION_LOG_KEY, JSON.stringify([...sent].slice(-250)));
+    }
+    checkReminders();
+    const timer = setInterval(checkReminders, 30000);
+    return () => clearInterval(timer);
+  }, [data, hydrated, notifications]);
+
+  useEffect(() => {
+    if (!hydrated || !notifications || !data.notificationSettings.morningSummary) return;
+    function checkMorningSummary() {
+      const current = new Date();
+      const today = toDateInput(current);
+      const currentTime = `${String(current.getHours()).padStart(2, "0")}:${String(current.getMinutes()).padStart(2, "0")}`;
+      if (currentTime < data.notificationSettings.morningTime || localStorage.getItem(MORNING_SENT_KEY) === today) return;
+      const open = allTodos(data).filter(todo => !todo.done);
+      const dueToday = open.filter(todo => todo.dueDate === today);
+      const overdue = open.filter(todo => todo.dueDate && todo.dueDate < today);
+      const meetingsToday = data.meetings.filter(meeting => localDayKey(new Date(meeting.startsAt)) === today);
+      const parts = [`${dueToday.length} ${dueToday.length === 1 ? "task" : "tasks"} due today`, `${overdue.length} overdue`, `${meetingsToday.length} ${meetingsToday.length === 1 ? "meeting" : "meetings"}`];
+      const first = dueToday[0]?.text || meetingsToday[0]?.title;
+      const body = `${parts.join(" · ")}${first ? `. First up: ${first}` : ". You have a clear day."}`;
+      void showNativeNotification("Your day ahead", body, `morning-${today}`);
+      showToast("Your morning summary is ready");
+      localStorage.setItem(MORNING_SENT_KEY, today);
+    }
+    checkMorningSummary();
+    const timer = setInterval(checkMorningSummary, 30000);
+    return () => clearInterval(timer);
+  }, [data, hydrated, notifications]);
 
   async function cloudRequest(fn: string, body: object) {
     const base = SUPABASE_URL.replace(/\/$/, "");
@@ -169,23 +214,39 @@ export default function DashboardApp() {
   }
   function update(recipe: (draft: AppData) => AppData) { setData(prev => recipe(prev)); }
   function showToast(message: string) { setToast(message); setTimeout(() => setToast(""), 3200); }
-  function notify(message: string) {
-    if (notifications && Notification.permission === "granted") new Notification("Anvi’s Dashboard", { body: message });
+  async function showNativeNotification(title: string, body: string, tag: string) {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    try {
+      if ("serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.ready;
+        await registration.showNotification(title, { body, tag, icon: "/icon-192.png", badge: "/icon-192.png", data: { url: "/" } });
+      } else {
+        new Notification(title, { body, tag, icon: "/icon-192.png" });
+      }
+    } catch { new Notification(title, { body, tag, icon: "/icon-192.png" }); }
+  }
+  function notify(message: string, tag = `notice-${Date.now()}`) {
+    if (notifications) void showNativeNotification("Anvi’s Dashboard", message, tag);
     showToast(message);
   }
   async function toggleNotifications() {
-    if (!("Notification" in window)) return showToast("Notifications aren’t supported in this browser");
-    if (!notifications) { const p = await Notification.requestPermission(); setNotifications(p === "granted"); showToast(p === "granted" ? "Notifications are on" : "Notifications stayed off"); }
+    if (!("Notification" in window)) return showToast("On iPhone, add the dashboard to your Home Screen first");
+    if (!notifications) { const p = await Notification.requestPermission(); setNotifications(p === "granted"); if (p === "granted") void showNativeNotification("Notifications are on", "Reminders and your morning summary are ready.", "notifications-enabled"); showToast(p === "granted" ? "Notifications are on" : "Notifications stayed off"); }
     else { setNotifications(false); showToast("Notifications are off"); }
+  }
+  function sendTestNotification() {
+    if (!notifications) return showToast("Enable notifications first");
+    void showNativeNotification("Anvi’s Dashboard", "Your reminders are working ✦", `test-${Date.now()}`);
+    showToast("Test notification sent");
   }
 
   function addTodo(subjectId?: string, exercise = false) {
     setTodoComposer({ subjectId, exercise });
   }
-  function saveTodo(text: string, dueDate?: string) {
+  function saveTodo(text: string, dueDate?: string, reminder?: string) {
     if (!todoComposer) return;
     const { subjectId, exercise } = todoComposer;
-    const todo: Todo = { id: uid(), text: text.trim(), done: false, priority: "medium", dueDate };
+    const todo: Todo = { id: uid(), text: text.trim(), done: false, priority: "medium", dueDate, reminder };
     update(d => subjectId ? ({ ...d, subjects: d.subjects.map(s => s.id === subjectId ? { ...s, [exercise ? "exercises" : "todos"]: [...(exercise ? s.exercises || [] : s.todos), todo] } : s) }) : ({ ...d, overallTodos: [...d.overallTodos, todo] }));
     setTodoComposer(null);
   }
@@ -245,7 +306,7 @@ export default function DashboardApp() {
           {tab === "goals" && <GoalsView data={data} update={update} />}
           {tab === "resources" && <ResourcesView data={data} update={update} uploadImage={uploadImage} />}
           {tab === "study" && <StudyView data={data} update={update} subject={timerSubject} setSubject={setTimerSubject} start={timerStart} elapsed={timerElapsed} startTimer={startTimer} stopTimer={stopTimer} showToast={showToast} />}
-          {tab === "settings" && <SettingsView data={data} update={update} notifications={notifications} toggleNotifications={toggleNotifications} status={syncStatus} />}
+          {tab === "settings" && <SettingsView data={data} update={update} notifications={notifications} toggleNotifications={toggleNotifications} sendTestNotification={sendTestNotification} status={syncStatus} />}
         </div>
         <nav className="mobile-nav">{nav.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
       </section>
@@ -377,17 +438,18 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, startTim
   </>;
 }
 
-function TodoComposer({ target, subjects, onSave, onClose }: { target: { subjectId?: string; exercise: boolean }; subjects: Subject[]; onSave: (text: string, dueDate?: string) => void; onClose: () => void }) {
+function TodoComposer({ target, subjects, onSave, onClose }: { target: { subjectId?: string; exercise: boolean }; subjects: Subject[]; onSave: (text: string, dueDate?: string, reminder?: string) => void; onClose: () => void }) {
   const [text, setText] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [reminder, setReminder] = useState("");
   const subject = subjects.find(s => s.id === target.subjectId);
   const title = target.exercise ? "Add required exercise" : subject ? `Add ${subject.name} task` : "Add personal todo";
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!text.trim()) return;
-    onSave(text, dueDate || undefined);
+    onSave(text, dueDate || undefined, reminder ? new Date(reminder).toISOString() : undefined);
   }
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">NEW TO-DO</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">Add to-do</button></div></form></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">NEW TO-DO</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><label>Remind me <small>optional</small><input type="datetime-local" value={reminder} onChange={event => setReminder(event.target.value)} /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">Add to-do</button></div></form></div>;
 }
 
 function PlannerHub({ data, update }: { data: AppData; update: (f: (d: AppData) => AppData) => void }) {
@@ -443,17 +505,23 @@ function PlannerHub({ data, update }: { data: AppData; update: (f: (d: AppData) 
   </section>;
 }
 
-function SettingsView({ data, update, notifications, toggleNotifications, status }: { data: AppData; update: (f: (d: AppData) => AppData) => void; notifications: boolean; toggleNotifications: () => void; status: string }) {
+function SettingsView({ data, update, notifications, toggleNotifications, sendTestNotification, status }: { data: AppData; update: (f: (d: AppData) => AppData) => void; notifications: boolean; toggleNotifications: () => void; sendTestNotification: () => void; status: string }) {
   function exportJson() { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "anvis-dashboard-backup.json"; a.click(); URL.revokeObjectURL(a.href); }
   function importJson(e: ChangeEvent<HTMLInputElement>) { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { update(() => mergeData(JSON.parse(String(reader.result)))); } catch { alert("That file doesn’t look like an Anvi’s Dashboard backup."); } }; reader.readAsText(file); }
-  return <><PageTitle eyebrow="SETTINGS" title="Make the desk yours." copy="Tune the visuals and keep a portable backup whenever you like." /><div className="settings-grid"><section className="card settings-card"><CardHeading kicker="AESTHETIC" title="Look & feel" /><label>Your name<input value={data.profile.name} onChange={e => update(d => ({ ...d, profile: { ...d.profile, name: e.target.value } }))} /></label><label>Dashboard hero image URL<input value={data.profile.heroImage} onChange={e => update(d => ({ ...d, profile: { ...d.profile, heroImage: e.target.value } }))} /></label><label>Daily line<input value={data.profile.quote} onChange={e => update(d => ({ ...d, profile: { ...d.profile, quote: e.target.value } }))} /></label><div className="preview-strip" style={{ backgroundImage: `url(${data.profile.heroImage})` }} /></section><section className="card settings-card"><CardHeading kicker="SUPABASE" title="Automatic cloud sync" /><p>There is nothing to enter or connect. This dashboard opens its shared Supabase record automatically and saves every change as you make it.</p><div className="setting-row"><div><strong>{status === "synced" ? "✓ Connected to Supabase" : status === "syncing" ? "Connecting to Supabase…" : status === "error" ? "Supabase setup required" : "Preparing cloud sync…"}</strong><small>{status === "synced" ? "Your data is available across devices" : status === "error" ? "Run the included setup SQL once" : "Loading your dashboard"}</small></div><span className={`sync-dot ${status}`} /></div></section><section className="card settings-card"><CardHeading kicker="NOTIFICATIONS" title="Gentle reminders" /><div className="setting-row"><div><strong>Browser notifications</strong><small>For high-priority tasks and reminder times</small></div><button className={`toggle ${notifications ? "on" : ""}`} onClick={toggleNotifications}><i /></button></div></section><section className="card settings-card"><CardHeading kicker="PORTABLE BACKUP" title="Export or import everything" /><p>Keep a human-readable JSON backup too. Importing replaces the current dashboard and then syncs it.</p><div className="backup-actions"><button className="button secondary" onClick={exportJson}>Export JSON</button><label className="button secondary">Import JSON<input hidden type="file" accept="application/json" onChange={importJson} /></label></div><details><summary>Edit raw data</summary><textarea value={JSON.stringify(data, null, 2)} onChange={e => { try { update(() => mergeData(JSON.parse(e.target.value))); } catch {} }} /></details></section></div></>;
+  return <><PageTitle eyebrow="SETTINGS" title="Make the desk yours." copy="Tune the visuals, reminders and installation options, and keep a portable backup whenever you like." /><div className="settings-grid">
+    <section className="card settings-card"><CardHeading kicker="AESTHETIC" title="Look & feel" /><label>Your name<input value={data.profile.name} onChange={e => update(d => ({ ...d, profile: { ...d.profile, name: e.target.value } }))} /></label><label>Dashboard hero image URL<input value={data.profile.heroImage} onChange={e => update(d => ({ ...d, profile: { ...d.profile, heroImage: e.target.value } }))} /></label><label>Daily line<input value={data.profile.quote} onChange={e => update(d => ({ ...d, profile: { ...d.profile, quote: e.target.value } }))} /></label><div className="preview-strip" style={{ backgroundImage: `url(${data.profile.heroImage})` }} /></section>
+    <section className="card settings-card"><CardHeading kicker="SUPABASE" title="Automatic cloud sync" /><p>There is nothing to enter or connect. This dashboard opens its shared Supabase record automatically and saves every change as you make it.</p><div className="setting-row"><div><strong>{status === "synced" ? "✓ Connected to Supabase" : status === "syncing" ? "Connecting to Supabase…" : status === "error" ? "Supabase setup required" : "Preparing cloud sync…"}</strong><small>{status === "synced" ? "Your data is available across devices" : status === "error" ? "Run the included setup SQL once" : "Loading your dashboard"}</small></div><span className={`sync-dot ${status}`} /></div></section>
+    <section className="card settings-card notification-card"><CardHeading kicker="NOTIFICATIONS" title="Reminders & mornings" /><div className="setting-row"><div><strong>Web notifications</strong><small>Todo reminders and 15-minute meeting alerts</small></div><button className={`toggle ${notifications ? "on" : ""}`} onClick={toggleNotifications} aria-label="Toggle web notifications"><i /></button></div><div className="setting-row"><div><strong>Morning day-ahead summary</strong><small>Tasks due, overdue items and today’s meetings</small></div><button className={`toggle ${data.notificationSettings.morningSummary ? "on" : ""}`} onClick={() => update(d => ({ ...d, notificationSettings: { ...d.notificationSettings, morningSummary: !d.notificationSettings.morningSummary } }))} aria-label="Toggle morning summary"><i /></button></div><label className="morning-time">Morning summary time<input type="time" value={data.notificationSettings.morningTime} onChange={event => update(d => ({ ...d, notificationSettings: { ...d.notificationSettings, morningTime: event.target.value } }))} /></label><button className="button secondary test-notification" onClick={sendTestNotification}>Send test notification</button><small className="privacy-note">The summary appears the first time the dashboard is open at or after this time. Fully closed-app delivery needs a server push scheduler.</small></section>
+    <section className="card settings-card install-card"><CardHeading kicker="MAC & IPHONE" title="Install as an app" /><p>Install Anvi’s Dashboard for its own icon, app window and the best notification support.</p><div className="install-step"><span>iPhone</span><div><strong>Safari → Share → Add to Home Screen</strong><small>Turn on “Open as Web App”, open it from the new icon, then enable notifications here.</small></div></div><div className="install-step"><span>Mac</span><div><strong>Safari → File → Add to Dock</strong><small>Open the new Dock app and enable notifications from its Settings page.</small></div></div><div className="widget-note"><strong>About Apple widgets</strong><p>A true Home Screen, Lock Screen or Mac desktop widget requires a native WidgetKit app. The installed web app is the closest web-only option.</p></div></section>
+    <section className="card settings-card"><CardHeading kicker="PORTABLE BACKUP" title="Export or import everything" /><p>Keep a human-readable JSON backup too. Importing replaces the current dashboard and then syncs it.</p><div className="backup-actions"><button className="button secondary" onClick={exportJson}>Export JSON</button><label className="button secondary">Import JSON<input hidden type="file" accept="application/json" onChange={importJson} /></label></div><details><summary>Edit raw data</summary><textarea value={JSON.stringify(data, null, 2)} onChange={e => { try { update(() => mergeData(JSON.parse(e.target.value))); } catch {} }} /></details></section>
+  </div></>;
 }
 
 function CardHeading({ kicker, title, action, onAction }: { kicker: string; title: string; action?: string; onAction?: () => void }) { return <div className="card-heading"><div><small>{kicker}</small><h2>{title}</h2></div>{action && <button onClick={onAction}>{action}</button>}</div>; }
 function PageTitle({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) { return <header className="page-title"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{copy}</p></header>; }
 function TaskGroup({ title, subtitle, color, todos, nested, hideHeading, toggleTodo, removeTodo, setPriority }: { title: string; subtitle?: string; color: string; todos: Todo[]; nested?: boolean; hideHeading?: boolean; toggleTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
   const today = toDateInput(new Date());
-  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><button className="delete" onClick={() => removeTodo(t.id)}>×</button></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
+  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}{t.reminder && <small className="due-chip reminder-chip">Remind {formatReminder(t.reminder)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><button className="delete" onClick={() => removeTodo(t.id)}>×</button></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
 }
 function addCountdown(update: (f: (d: AppData) => AppData) => void) { const title = prompt("Countdown name"); if (!title) return; const date = prompt("Date and time (example: 2026-10-15 09:00)"); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: [...d.countdowns, { id: uid(), title, date: new Date(date).toISOString(), color: swatches[d.countdowns.length % swatches.length] }] })); }
 function addGoal(update: (f: (d: AppData) => AppData) => void, key: keyof AppData["goals"]) { const text = prompt(`New goal for ${horizons[key]}`); if (text?.trim()) update(d => ({ ...d, goals: { ...d.goals, [key]: [...d.goals[key], { id: uid(), text: text.trim(), done: false }] } })); }
@@ -461,6 +529,7 @@ function addBookmark(update: (f: (d: AppData) => AppData) => void) { const title
 function addImageUrl(update: (f: (d: AppData) => AppData) => void, target: "visionImages" | "dashboardImages") { const url = prompt("Paste an image URL"); if (!url) return; const caption = prompt("Short caption") || "Inspiration"; update(d => ({ ...d, [target]: [...d[target], { id: uid(), url, caption }] })); }
 function addNewSubject(update: (f: (d: AppData) => AppData) => void) { const name = prompt("Project or subject name"); if (!name?.trim()) return; update(d => ({ ...d, subjects: [...d.subjects, { id: uid(), name: name.trim(), color: swatches[d.subjects.length % swatches.length], goodAt: "", improve: "", todos: [] }] })); }
 function normaliseUrl(url: string) { return /^https?:\/\//i.test(url) ? url : `https://${url}`; }
+function allTodos(d: AppData) { return [...d.overallTodos, ...d.subjects.flatMap(subject => [...subject.todos, ...(subject.exercises || [])])]; }
 function countOpen(d: AppData) { return [...d.overallTodos, ...d.subjects.flatMap(s => [...s.todos, ...(s.exercises || [])])].filter(t => !t.done).length; }
 function completion(d: AppData) { const all = [...d.overallTodos, ...d.subjects.flatMap(s => [...s.todos, ...(s.exercises || [])])]; return all.length ? Math.round((all.filter(t => t.done).length / all.length) * 100) : 100; }
 function formatClock(seconds: number) { const h = Math.floor(seconds / 3600); const m = Math.floor((seconds % 3600) / 60); const s = seconds % 60; return [h, m, s].map(n => String(n).padStart(2, "0")).join(":"); }
@@ -472,4 +541,5 @@ function toDateInput(date: Date) { const offset = date.getTimezoneOffset() * 600
 function toTimeInput(date: Date) { return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; }
 function localDayKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 function formatDueDate(value: string) { const date = new Date(`${value}T12:00:00`); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-AU", { day: "numeric", month: "short" }); }
+function formatReminder(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); }
 function lastSevenDays() { return Array.from({ length: 7 }, (_, index) => { const date = new Date(); date.setHours(12, 0, 0, 0); date.setDate(date.getDate() - (6 - index)); return { key: localDayKey(date), label: date.toLocaleDateString("en-AU", { weekday: "short" }).slice(0, 2) }; }); }
