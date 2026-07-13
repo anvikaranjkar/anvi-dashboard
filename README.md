@@ -16,21 +16,15 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 
 1. Extract the ZIP and upload the folder to GitHub, GitLab or Bitbucket.
 2. In Vercel, choose **Add New → Project**, import the repository and keep the detected **Next.js** settings.
-3. Add these environment variables in Vercel if you want Supabase preconfigured:
-
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-
-4. Press **Deploy**. You can also leave the variables empty and enter both values later in the app’s Settings page.
+3. Press **Deploy**. The supplied Supabase project is already configured in the app, so no environment variables are required.
 
 Vercel uses the included `vercel.json`, runs `npm install`, then runs the standard Next.js Vercel build.
 
 ## Supabase setup
 
-1. Create a Supabase project.
+1. Open the configured Supabase project.
 2. Open **SQL Editor**, paste `supabase/setup.sql`, and run it once.
-3. Add the Supabase project URL and anonymous key to Vercel, or paste them into the app’s Settings page.
-4. Use the same private passphrase on each device to open the same dashboard record.
+3. Use the same private passphrase on each device to open the same dashboard record.
 
 The app keeps an on-device cache for offline continuity. Supabase remains the shared source for cross-device persistence, and its `vision-board` storage bucket holds uploaded images.
 
