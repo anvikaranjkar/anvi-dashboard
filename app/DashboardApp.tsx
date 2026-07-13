@@ -78,9 +78,7 @@ const nav: { id: Tab; label: string; icon: string }[] = [
 const horizons = { week: "This Week", term: "This Term", sixMonths: "Next Six Months", year: "This Year · HSC Focus" } as const;
 const swatches = ["#f2b8c6", "#a8c7fa", "#b8ddc0", "#c7b8ee", "#f6cf9e", "#d7dfa5", "#f0b7e3"];
 const STORAGE_KEY = "anvis-dashboard-data";
-const CONFIG_KEY = "anvis-dashboard-supabase";
 const LEGACY_STORAGE_KEY = "daydream-desk-data";
-const LEGACY_CONFIG_KEY = "daydream-desk-supabase";
 const SUPABASE_URL = "https://iiwjnqfbhzfzwzvccapc.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlpd2pucWZiaHpmend6dmNjYXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4Njk2NTEsImV4cCI6MjA5NDQ0NTY1MX0.PX4XXr9fxtZHqN-hq5iwvkOV3-oYULXi459Zcis6h9Y";
 
@@ -95,9 +93,9 @@ export default function DashboardApp() {
   const [now, setNow] = useState(Date.now());
   const [toast, setToast] = useState("");
   const [notifications, setNotifications] = useState(false);
-  const [pin, setPin] = useState("");
   const [syncStatus, setSyncStatus] = useState<"local" | "syncing" | "synced" | "error">("local");
   const [hydrated, setHydrated] = useState(false);
+  const [cloudReady, setCloudReady] = useState(false);
   const [timerSubject, setTimerSubject] = useState("English");
   const [timerStart, setTimerStart] = useState<number | null>(null);
   const [timerElapsed, setTimerElapsed] = useState(0);
@@ -105,11 +103,11 @@ export default function DashboardApp() {
 
   useEffect(() => {
     const cached = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
-    const config = localStorage.getItem(CONFIG_KEY) || localStorage.getItem(LEGACY_CONFIG_KEY);
-    if (cached) { try { setData(mergeData(JSON.parse(cached))); } catch {} }
-    if (config) { try { const c = JSON.parse(config); setPin(c.pin || ""); } catch {} }
+    let initial = starter;
+    if (cached) { try { initial = mergeData(JSON.parse(cached)); setData(initial); } catch {} }
     setNotifications(Notification?.permission === "granted");
     setHydrated(true);
+    void loadCloud(initial);
   }, []);
 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
@@ -122,11 +120,11 @@ export default function DashboardApp() {
   useEffect(() => {
     if (!hydrated) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    if (!pin) return;
+    if (!cloudReady) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setSyncStatus("syncing");
     saveTimer.current = setTimeout(() => saveCloud(data), 900);
-  }, [data, hydrated]);
+  }, [data, hydrated, cloudReady]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -139,23 +137,31 @@ export default function DashboardApp() {
     const base = SUPABASE_URL.replace(/\/$/, "");
     return fetch(`${base}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   }
+  async function writeCloud(next: AppData) {
+    const r = await cloudRequest("save_student_dashboard", { new_payload: next });
+    if (!r.ok) throw new Error(await r.text());
+  }
   async function saveCloud(next: AppData) {
     try {
-      const r = await cloudRequest("save_student_dashboard", { access_pin: pin, new_payload: next });
-      if (!r.ok) throw new Error(); setSyncStatus("synced");
+      await writeCloud(next); setSyncStatus("synced");
     } catch { setSyncStatus("error"); }
   }
-  async function connectCloud() {
-    if (!pin.trim()) return showToast("Choose a private passphrase first");
-    localStorage.setItem(CONFIG_KEY, JSON.stringify({ pin }));
+  async function loadCloud(fallback: AppData) {
     setSyncStatus("syncing");
     try {
-      const r = await cloudRequest("load_student_dashboard", { access_pin: pin });
+      const r = await cloudRequest("load_student_dashboard", {});
       if (!r.ok) throw new Error(await r.text());
       const payload = await r.json();
-      if (payload && Object.keys(payload).length) setData(mergeData(payload)); else await saveCloud(data);
-      setSyncStatus("synced"); showToast("Connected — this dashboard now syncs across devices");
-    } catch { setSyncStatus("error"); showToast("Couldn’t connect. Check that the Supabase setup SQL has run."); }
+      if (payload && Object.keys(payload).length) {
+        const cloudData = mergeData(payload);
+        setData(cloudData);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudData));
+      } else {
+        await writeCloud(fallback);
+      }
+      setCloudReady(true);
+      setSyncStatus("synced");
+    } catch { setCloudReady(false); setSyncStatus("error"); }
   }
   function update(recipe: (draft: AppData) => AppData) { setData(prev => recipe(prev)); }
   function showToast(message: string) { setToast(message); setTimeout(() => setToast(""), 3200); }
@@ -195,10 +201,9 @@ export default function DashboardApp() {
   }
   async function uploadImage(event: ChangeEvent<HTMLInputElement>, target: "visionImages" | "dashboardImages") {
     const file = event.target.files?.[0]; if (!file) return;
-    if (!pin) return showToast("Set your sync passphrase in Settings first");
     showToast("Uploading image…");
     try {
-      const hash = await hashText(pin); const path = `${hash}/${uid()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`;
+      const path = `anvis-dashboard/${uid()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`;
       const base = SUPABASE_URL.replace(/\/$/, "");
       const r = await fetch(`${base}/storage/v1/object/vision-board/${path}`, { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": file.type, "x-upsert": "false" }, body: file });
       if (!r.ok) throw new Error();
@@ -218,7 +223,7 @@ export default function DashboardApp() {
         <nav>{nav.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span>{item.label}{item.id === "dashboard" && <b>{incomplete}</b>}</button>)}</nav>
         <div className="sidebar-footer">
           <div className={`sync-dot ${syncStatus}`} />
-          <div><strong>{syncStatus === "synced" ? "Saved to cloud" : syncStatus === "syncing" ? "Saving…" : syncStatus === "error" ? "Local backup" : "Cloud ready"}</strong><small>{syncStatus === "synced" ? "Available everywhere" : "Set passphrase in Settings"}</small></div>
+          <div><strong>{syncStatus === "synced" ? "Saved to Supabase" : syncStatus === "syncing" ? "Saving…" : syncStatus === "error" ? "Local backup" : "Connecting…"}</strong><small>{syncStatus === "synced" ? "Automatic cloud sync" : syncStatus === "error" ? "Supabase setup required" : "Loading shared dashboard"}</small></div>
         </div>
       </aside>
 
@@ -231,7 +236,7 @@ export default function DashboardApp() {
           {tab === "goals" && <GoalsView data={data} update={update} />}
           {tab === "resources" && <ResourcesView data={data} update={update} uploadImage={uploadImage} />}
           {tab === "study" && <StudyView data={data} update={update} subject={timerSubject} setSubject={setTimerSubject} start={timerStart} elapsed={timerElapsed} startTimer={startTimer} stopTimer={stopTimer} showToast={showToast} />}
-          {tab === "settings" && <SettingsView data={data} update={update} notifications={notifications} toggleNotifications={toggleNotifications} pin={pin} setPin={setPin} connect={connectCloud} status={syncStatus} />}
+          {tab === "settings" && <SettingsView data={data} update={update} notifications={notifications} toggleNotifications={toggleNotifications} status={syncStatus} />}
         </div>
         <nav className="mobile-nav">{nav.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
       </section>
@@ -361,10 +366,10 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, startTim
   </>;
 }
 
-function SettingsView({ data, update, notifications, toggleNotifications, pin, setPin, connect, status }: { data: AppData; update: (f: (d: AppData) => AppData) => void; notifications: boolean; toggleNotifications: () => void; pin: string; setPin: (s: string) => void; connect: () => void; status: string }) {
+function SettingsView({ data, update, notifications, toggleNotifications, status }: { data: AppData; update: (f: (d: AppData) => AppData) => void; notifications: boolean; toggleNotifications: () => void; status: string }) {
   function exportJson() { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "anvis-dashboard-backup.json"; a.click(); URL.revokeObjectURL(a.href); }
   function importJson(e: ChangeEvent<HTMLInputElement>) { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { update(() => mergeData(JSON.parse(String(reader.result)))); } catch { alert("That file doesn’t look like an Anvi’s Dashboard backup."); } }; reader.readAsText(file); }
-  return <><PageTitle eyebrow="SETTINGS" title="Make the desk yours." copy="Tune the visuals, connect your private cloud record, and keep a portable backup whenever you like." /><div className="settings-grid"><section className="card settings-card"><CardHeading kicker="AESTHETIC" title="Look & feel" /><label>Your name<input value={data.profile.name} onChange={e => update(d => ({ ...d, profile: { ...d.profile, name: e.target.value } }))} /></label><label>Dashboard hero image URL<input value={data.profile.heroImage} onChange={e => update(d => ({ ...d, profile: { ...d.profile, heroImage: e.target.value } }))} /></label><label>Daily line<input value={data.profile.quote} onChange={e => update(d => ({ ...d, profile: { ...d.profile, quote: e.target.value } }))} /></label><div className="preview-strip" style={{ backgroundImage: `url(${data.profile.heroImage})` }} /></section><section className="card settings-card"><CardHeading kicker="SUPABASE" title="Sync across every device" /><p>Your Supabase project is already connected. Use the same private passphrase on each device to open one shared dashboard record.</p><label>Private PIN or passphrase<input type="password" placeholder="Use something hard to guess" value={pin} onChange={e => setPin(e.target.value)} /></label><button className="button wide" onClick={connect}>{status === "syncing" ? "Connecting…" : status === "synced" ? "✓ Connected — refresh from cloud" : "Connect & sync"}</button><small className="privacy-note">Use a longer passphrase for better protection. This browser remembers only your passphrase on this device.</small></section><section className="card settings-card"><CardHeading kicker="NOTIFICATIONS" title="Gentle reminders" /><div className="setting-row"><div><strong>Browser notifications</strong><small>For high-priority tasks and reminder times</small></div><button className={`toggle ${notifications ? "on" : ""}`} onClick={toggleNotifications}><i /></button></div></section><section className="card settings-card"><CardHeading kicker="PORTABLE BACKUP" title="Export or import everything" /><p>Keep a human-readable JSON backup too. Importing replaces the current dashboard and then syncs it.</p><div className="backup-actions"><button className="button secondary" onClick={exportJson}>Export JSON</button><label className="button secondary">Import JSON<input hidden type="file" accept="application/json" onChange={importJson} /></label></div><details><summary>Edit raw data</summary><textarea value={JSON.stringify(data, null, 2)} onChange={e => { try { update(() => mergeData(JSON.parse(e.target.value))); } catch {} }} /></details></section></div></>;
+  return <><PageTitle eyebrow="SETTINGS" title="Make the desk yours." copy="Tune the visuals and keep a portable backup whenever you like." /><div className="settings-grid"><section className="card settings-card"><CardHeading kicker="AESTHETIC" title="Look & feel" /><label>Your name<input value={data.profile.name} onChange={e => update(d => ({ ...d, profile: { ...d.profile, name: e.target.value } }))} /></label><label>Dashboard hero image URL<input value={data.profile.heroImage} onChange={e => update(d => ({ ...d, profile: { ...d.profile, heroImage: e.target.value } }))} /></label><label>Daily line<input value={data.profile.quote} onChange={e => update(d => ({ ...d, profile: { ...d.profile, quote: e.target.value } }))} /></label><div className="preview-strip" style={{ backgroundImage: `url(${data.profile.heroImage})` }} /></section><section className="card settings-card"><CardHeading kicker="SUPABASE" title="Automatic cloud sync" /><p>There is nothing to enter or connect. This dashboard opens its shared Supabase record automatically and saves every change as you make it.</p><div className="setting-row"><div><strong>{status === "synced" ? "✓ Connected to Supabase" : status === "syncing" ? "Connecting to Supabase…" : status === "error" ? "Supabase setup required" : "Preparing cloud sync…"}</strong><small>{status === "synced" ? "Your data is available across devices" : status === "error" ? "Run the included setup SQL once" : "Loading your dashboard"}</small></div><span className={`sync-dot ${status}`} /></div></section><section className="card settings-card"><CardHeading kicker="NOTIFICATIONS" title="Gentle reminders" /><div className="setting-row"><div><strong>Browser notifications</strong><small>For high-priority tasks and reminder times</small></div><button className={`toggle ${notifications ? "on" : ""}`} onClick={toggleNotifications}><i /></button></div></section><section className="card settings-card"><CardHeading kicker="PORTABLE BACKUP" title="Export or import everything" /><p>Keep a human-readable JSON backup too. Importing replaces the current dashboard and then syncs it.</p><div className="backup-actions"><button className="button secondary" onClick={exportJson}>Export JSON</button><label className="button secondary">Import JSON<input hidden type="file" accept="application/json" onChange={importJson} /></label></div><details><summary>Edit raw data</summary><textarea value={JSON.stringify(data, null, 2)} onChange={e => { try { update(() => mergeData(JSON.parse(e.target.value))); } catch {} }} /></details></section></div></>;
 }
 
 function CardHeading({ kicker, title, action, onAction }: { kicker: string; title: string; action?: string; onAction?: () => void }) { return <div className="card-heading"><div><small>{kicker}</small><h2>{title}</h2></div>{action && <button onClick={onAction}>{action}</button>}</div>; }
@@ -389,4 +394,3 @@ function toDateInput(date: Date) { const offset = date.getTimezoneOffset() * 600
 function toTimeInput(date: Date) { return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; }
 function localDayKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 function lastSevenDays() { return Array.from({ length: 7 }, (_, index) => { const date = new Date(); date.setHours(12, 0, 0, 0); date.setDate(date.getDate() - (6 - index)); return { key: localDayKey(date), label: date.toLocaleDateString("en-AU", { weekday: "short" }).slice(0, 2) }; }); }
-async function hashText(text: string) { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)); return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join(""); }

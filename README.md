@@ -9,7 +9,7 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 - Seven-day study chart, subject breakdown and week-over-week comparison
 - Overall todos grouped by subject, including required Maths exercises
 - Goals by time horizon, live countdowns, bookmarks, notes and image boards
-- Supabase sync for cross-device data and image storage
+- Automatic Supabase sync for cross-device data and image storage
 - JSON export/import backup
 
 ## Deploy to Vercel
@@ -24,7 +24,7 @@ Vercel uses the included `vercel.json`, runs `npm install`, then runs the standa
 
 1. Open the configured Supabase project.
 2. Open **SQL Editor**, paste `supabase/setup.sql`, and run it once.
-3. Use the same private passphrase on each device to open the same dashboard record.
+3. Open the dashboard on any device. It loads and saves the same Supabase record automatically, with no passphrase or connection setup.
 
 The app keeps an on-device cache for offline continuity. Supabase remains the shared source for cross-device persistence, and its `vision-board` storage bucket holds uploaded images.
 
