@@ -4,13 +4,14 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 
 type Tab = "dashboard" | "subjects" | "goals" | "resources" | "study" | "settings";
 type Priority = "low" | "medium" | "high";
-type Todo = { id: string; text: string; done: boolean; priority: Priority; reminder?: string };
+type Todo = { id: string; text: string; done: boolean; priority: Priority; reminder?: string; dueDate?: string };
 type Subject = { id: string; name: string; color: string; goodAt: string; improve: string; todos: Todo[]; exercises?: Todo[] };
 type Goal = { id: string; text: string; done: boolean };
 type Countdown = { id: string; title: string; date: string; color: string };
 type StudySession = { id: string; subject: string; startedAt: string; durationSeconds: number; note?: string };
 type ImageItem = { id: string; url: string; caption: string };
 type Bookmark = { id: string; title: string; url: string };
+type Meeting = { id: string; title: string; startsAt: string; details?: string };
 type AppData = {
   profile: { name: string; heroImage: string; quote: string };
   subjects: Subject[];
@@ -22,6 +23,7 @@ type AppData = {
   visionImages: ImageItem[];
   dashboardImages: ImageItem[];
   studySessions: StudySession[];
+  meetings: Meeting[];
 };
 
 const uid = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -68,6 +70,7 @@ const starter: AppData = {
   ],
   dashboardImages: [{ id: "d1", url: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=900&q=80", caption: "This week’s mood" }],
   studySessions: [],
+  meetings: [],
 };
 
 const nav: { id: Tab; label: string; icon: string }[] = [
@@ -96,6 +99,7 @@ export default function DashboardApp() {
   const [syncStatus, setSyncStatus] = useState<"local" | "syncing" | "synced" | "error">("local");
   const [hydrated, setHydrated] = useState(false);
   const [cloudReady, setCloudReady] = useState(false);
+  const [todoComposer, setTodoComposer] = useState<{ subjectId?: string; exercise: boolean } | null>(null);
   const [timerSubject, setTimerSubject] = useState("English");
   const [timerStart, setTimerStart] = useState<number | null>(null);
   const [timerElapsed, setTimerElapsed] = useState(0);
@@ -176,9 +180,14 @@ export default function DashboardApp() {
   }
 
   function addTodo(subjectId?: string, exercise = false) {
-    const text = prompt(exercise ? "Required exercise or chapter" : "What needs doing?"); if (!text?.trim()) return;
-    const todo: Todo = { id: uid(), text: text.trim(), done: false, priority: "medium" };
+    setTodoComposer({ subjectId, exercise });
+  }
+  function saveTodo(text: string, dueDate?: string) {
+    if (!todoComposer) return;
+    const { subjectId, exercise } = todoComposer;
+    const todo: Todo = { id: uid(), text: text.trim(), done: false, priority: "medium", dueDate };
     update(d => subjectId ? ({ ...d, subjects: d.subjects.map(s => s.id === subjectId ? { ...s, [exercise ? "exercises" : "todos"]: [...(exercise ? s.exercises || [] : s.todos), todo] } : s) }) : ({ ...d, overallTodos: [...d.overallTodos, todo] }));
+    setTodoComposer(null);
   }
   function toggleTodo(id: string) {
     const flip = (items: Todo[]) => items.map(t => t.id === id ? { ...t, done: !t.done } : t);
@@ -241,6 +250,7 @@ export default function DashboardApp() {
         <nav className="mobile-nav">{nav.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
       </section>
       {toast && <div className="toast"><span>✦</span>{toast}</div>}
+      {todoComposer && <TodoComposer target={todoComposer} subjects={data.subjects} onSave={saveTodo} onClose={() => setTodoComposer(null)} />}
     </main>
   );
 }
@@ -259,6 +269,7 @@ function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, removeT
       <section className="card photo-card"><CardHeading kicker="PINBOARD" title="A little inspiration" />{data.dashboardImages[0] ? <div className="dashboard-photo"><img src={data.dashboardImages[0].url} alt={data.dashboardImages[0].caption} /><span>{data.dashboardImages[0].caption}</span></div> : <div className="empty-image">Add a mood image</div>}<div className="photo-actions"><label className="button secondary">Upload image<input hidden type="file" accept="image/*" onChange={e => uploadImage(e, "dashboardImages")} /></label><button className="text-button" onClick={() => addImageUrl(update, "dashboardImages")}>Paste URL</button></div></section>
       <section className="card quick-note"><CardHeading kicker="SCRATCHPAD" title="Quick note" /><textarea value={data.notes} onChange={e => update(d => ({ ...d, notes: e.target.value }))} aria-label="Quick notes" /><small>Saved automatically</small></section></aside>
     </div>
+    <PlannerHub data={data} update={update} />
   </>;
 }
 
@@ -366,6 +377,72 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, startTim
   </>;
 }
 
+function TodoComposer({ target, subjects, onSave, onClose }: { target: { subjectId?: string; exercise: boolean }; subjects: Subject[]; onSave: (text: string, dueDate?: string) => void; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const subject = subjects.find(s => s.id === target.subjectId);
+  const title = target.exercise ? "Add required exercise" : subject ? `Add ${subject.name} task` : "Add personal todo";
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!text.trim()) return;
+    onSave(text, dueDate || undefined);
+  }
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">NEW TO-DO</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">Add to-do</button></div></form></div>;
+}
+
+function PlannerHub({ data, update }: { data: AppData; update: (f: (d: AppData) => AppData) => void }) {
+  const initialMonth = new Date(); initialMonth.setDate(1); initialMonth.setHours(12, 0, 0, 0);
+  const [month, setMonth] = useState(initialMonth);
+  const [showMeetingForm, setShowMeetingForm] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [meetingDate, setMeetingDate] = useState(toDateInput(new Date()));
+  const [meetingTime, setMeetingTime] = useState("16:00");
+  const [meetingDetails, setMeetingDetails] = useState("");
+  const todayKey = toDateInput(new Date());
+  const datedTodos = [
+    ...data.overallTodos.filter(todo => todo.dueDate).map(todo => ({ todo, source: "Personal", color: "#f6cf9e" })),
+    ...data.subjects.flatMap(subject => [
+      ...subject.todos.filter(todo => todo.dueDate).map(todo => ({ todo, source: subject.name, color: subject.color })),
+      ...(subject.exercises || []).filter(todo => todo.dueDate).map(todo => ({ todo, source: `${subject.name} exercises`, color: subject.color })),
+    ]),
+  ];
+  const dueAgenda = datedTodos.filter(item => !item.todo.done).sort((a, b) => (a.todo.dueDate || "").localeCompare(b.todo.dueDate || "")).slice(0, 7);
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const upcomingMeetings = [...data.meetings].filter(meeting => new Date(meeting.startsAt).getTime() >= startOfToday.getTime()).sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const leadingBlanks = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const cells: (number | null)[] = [...Array.from({ length: leadingBlanks }, () => null), ...Array.from({ length: daysInMonth }, (_, index) => index + 1)];
+
+  function changeMonth(offset: number) { setMonth(current => new Date(current.getFullYear(), current.getMonth() + offset, 1, 12)); }
+  function addMeeting(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const startsAt = new Date(`${meetingDate}T${meetingTime}`);
+    if (!meetingTitle.trim() || Number.isNaN(startsAt.getTime())) return;
+    const meeting: Meeting = { id: uid(), title: meetingTitle.trim(), startsAt: startsAt.toISOString(), details: meetingDetails.trim() || undefined };
+    update(d => ({ ...d, meetings: [...d.meetings, meeting] }));
+    setMeetingTitle(""); setMeetingDetails(""); setShowMeetingForm(false);
+  }
+
+  return <section className="planner-grid">
+    <div className="card calendar-card">
+      <div className="planner-heading"><div><small>DUE DATES</small><h2>{month.toLocaleDateString("en-AU", { month: "long", year: "numeric" })}</h2></div><div className="calendar-nav"><button onClick={() => changeMonth(-1)} aria-label="Previous month">←</button><button onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1, 12))}>Today</button><button onClick={() => changeMonth(1)} aria-label="Next month">→</button></div></div>
+      <div className="calendar-weekdays">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <span key={day}>{day}</span>)}</div>
+      <div className="calendar-grid">{cells.map((day, index) => {
+        if (!day) return <div className="calendar-cell blank" key={`blank-${index}`} />;
+        const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const taskEvents = datedTodos.filter(item => item.todo.dueDate === key);
+        const meetingEvents = data.meetings.filter(meeting => localDayKey(new Date(meeting.startsAt)) === key);
+        const events = [...taskEvents.map(item => ({ id: item.todo.id, label: `${item.source}: ${item.todo.text}`, color: item.color, type: "task" })), ...meetingEvents.map(meeting => ({ id: meeting.id, label: meeting.title, color: "#c7b8ee", type: "meeting" }))];
+        return <div className={`calendar-cell ${key === todayKey ? "today" : ""}`} key={key}><b>{day}</b><div>{events.slice(0, 2).map(event => <span className={`calendar-event ${event.type}`} style={{ "--event": event.color } as React.CSSProperties} title={event.label} key={`${event.type}-${event.id}`}><i />{event.label}</span>)}{events.length > 2 && <small>+{events.length - 2} more</small>}</div></div>;
+      })}</div>
+      <div className="due-agenda"><div className="agenda-title"><strong>What’s due next</strong><small>Tasks with completion dates</small></div>{dueAgenda.length ? dueAgenda.map(item => <div className="due-agenda-row" key={item.todo.id}><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><time className={(item.todo.dueDate || "") < todayKey ? "overdue" : ""}>{(item.todo.dueDate || "") < todayKey ? "Overdue · " : ""}{formatDueDate(item.todo.dueDate || "")}</time></div>) : <div className="empty-state">Add a completion date to a to-do and it will appear here.</div>}</div>
+    </div>
+    <div className="card meetings-card"><CardHeading kicker="SCHEDULE" title="Upcoming meetings" action={showMeetingForm ? "Close" : "＋ Add meeting"} onAction={() => setShowMeetingForm(value => !value)} />{showMeetingForm && <form className="meeting-form" onSubmit={addMeeting}><label>Meeting<input autoFocus value={meetingTitle} onChange={event => setMeetingTitle(event.target.value)} placeholder="Meeting title" required /></label><div><label>Date<input type="date" value={meetingDate} onChange={event => setMeetingDate(event.target.value)} required /></label><label>Time<input type="time" value={meetingTime} onChange={event => setMeetingTime(event.target.value)} required /></label></div><label>Details <small>optional</small><input value={meetingDetails} onChange={event => setMeetingDetails(event.target.value)} placeholder="Location, link or reminder" /></label><button className="button wide" type="submit">Save meeting</button></form>}<div className="meeting-list">{upcomingMeetings.length ? upcomingMeetings.map(meeting => <div className="meeting-row" key={meeting.id}><time><b>{new Date(meeting.startsAt).getDate()}</b><span>{new Date(meeting.startsAt).toLocaleDateString("en-AU", { month: "short" })}</span></time><div><strong>{meeting.title}</strong><small>{new Date(meeting.startsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}{meeting.details ? ` · ${meeting.details}` : ""}</small></div><button className="delete" onClick={() => update(d => ({ ...d, meetings: d.meetings.filter(item => item.id !== meeting.id) }))} aria-label={`Delete ${meeting.title}`}>×</button></div>) : <div className="empty-state">No upcoming meetings yet.</div>}</div></div>
+  </section>;
+}
+
 function SettingsView({ data, update, notifications, toggleNotifications, status }: { data: AppData; update: (f: (d: AppData) => AppData) => void; notifications: boolean; toggleNotifications: () => void; status: string }) {
   function exportJson() { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "anvis-dashboard-backup.json"; a.click(); URL.revokeObjectURL(a.href); }
   function importJson(e: ChangeEvent<HTMLInputElement>) { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { update(() => mergeData(JSON.parse(String(reader.result)))); } catch { alert("That file doesn’t look like an Anvi’s Dashboard backup."); } }; reader.readAsText(file); }
@@ -375,7 +452,8 @@ function SettingsView({ data, update, notifications, toggleNotifications, status
 function CardHeading({ kicker, title, action, onAction }: { kicker: string; title: string; action?: string; onAction?: () => void }) { return <div className="card-heading"><div><small>{kicker}</small><h2>{title}</h2></div>{action && <button onClick={onAction}>{action}</button>}</div>; }
 function PageTitle({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) { return <header className="page-title"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{copy}</p></header>; }
 function TaskGroup({ title, subtitle, color, todos, nested, hideHeading, toggleTodo, removeTodo, setPriority }: { title: string; subtitle?: string; color: string; todos: Todo[]; nested?: boolean; hideHeading?: boolean; toggleTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
-  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span>{t.text}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><button className="delete" onClick={() => removeTodo(t.id)}>×</button></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
+  const today = toDateInput(new Date());
+  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><button className="delete" onClick={() => removeTodo(t.id)}>×</button></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
 }
 function addCountdown(update: (f: (d: AppData) => AppData) => void) { const title = prompt("Countdown name"); if (!title) return; const date = prompt("Date and time (example: 2026-10-15 09:00)"); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: [...d.countdowns, { id: uid(), title, date: new Date(date).toISOString(), color: swatches[d.countdowns.length % swatches.length] }] })); }
 function addGoal(update: (f: (d: AppData) => AppData) => void, key: keyof AppData["goals"]) { const text = prompt(`New goal for ${horizons[key]}`); if (text?.trim()) update(d => ({ ...d, goals: { ...d.goals, [key]: [...d.goals[key], { id: uid(), text: text.trim(), done: false }] } })); }
@@ -393,4 +471,5 @@ function rangeTotal(sessions: StudySession[], fromDays: number, toDays: number) 
 function toDateInput(date: Date) { const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10); }
 function toTimeInput(date: Date) { return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; }
 function localDayKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
+function formatDueDate(value: string) { const date = new Date(`${value}T12:00:00`); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-AU", { day: "numeric", month: "short" }); }
 function lastSevenDays() { return Array.from({ length: 7 }, (_, index) => { const date = new Date(); date.setHours(12, 0, 0, 0); date.setDate(date.getDate() - (6 - index)); return { key: localDayKey(date), label: date.toLocaleDateString("en-AU", { weekday: "short" }).slice(0, 2) }; }); }

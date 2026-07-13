@@ -8,6 +8,8 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 - Daily, weekly, lifetime, average, consistency and longest-session statistics
 - Seven-day study chart, subject breakdown and week-over-week comparison
 - Overall todos grouped by subject, including required Maths exercises
+- Optional todo completion dates with a monthly due-date calendar
+- Simple upcoming meeting planner with date, time and details
 - Goals by time horizon, live countdowns, bookmarks, notes and image boards
 - Automatic Supabase sync for cross-device data and image storage
 - JSON export/import backup
