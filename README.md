@@ -4,15 +4,15 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 
 ## What’s included
 
-- Live study timer and manual session logging with date, time, subject, duration and study notes
+- Open, Pomodoro preset and custom-length study timers with a “working on” note, plus manual session logging
 - Daily, weekly, lifetime, average, consistency and longest-session statistics
 - Seven-day study chart, subject breakdown and week-over-week comparison
 - Overall todos grouped by subject, including required Maths exercises
-- Optional todo completion dates with a monthly due-date calendar
-- Simple upcoming meeting planner with date, time and details
+- Editable todo completion dates, a dedicated today list and a monthly due-date calendar
+- Upcoming meeting planner with editable dates, start/end times, details and per-meeting alert timing
 - Installable web app for iPhone and Mac with native-style notification support
-- Timed todo reminders, 15-minute meeting alerts and a configurable morning summary
-- Goals by time horizon, live countdowns, bookmarks, notes and image boards
+- Timed todo reminders, flexible meeting alerts and a configurable morning summary
+- Goals by time horizon, chronologically ordered countdowns, bookmarks, notes and square bulk-upload image boards
 - Automatic Supabase sync for cross-device data and image storage
 - JSON export/import backup
 

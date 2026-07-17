@@ -11,7 +11,8 @@ type Countdown = { id: string; title: string; date: string; color: string };
 type StudySession = { id: string; subject: string; startedAt: string; durationSeconds: number; note?: string };
 type ImageItem = { id: string; url: string; caption: string };
 type Bookmark = { id: string; title: string; url: string };
-type Meeting = { id: string; title: string; startsAt: string; details?: string };
+type Meeting = { id: string; title: string; startsAt: string; endsAt?: string; details?: string; reminderMinutes?: number };
+type TodoComposerState = { subjectId?: string; exercise: boolean; todoId?: string };
 type AppData = {
   profile: { name: string; heroImage: string; quote: string };
   subjects: Subject[];
@@ -82,6 +83,7 @@ const nav: { id: Tab; label: string; icon: string }[] = [
 ];
 const horizons = { week: "This Week", term: "This Term", sixMonths: "Next Six Months", year: "This Year · HSC Focus" } as const;
 const swatches = ["#f2b8c6", "#a8c7fa", "#b8ddc0", "#c7b8ee", "#f6cf9e", "#d7dfa5", "#f0b7e3"];
+const REQUIRED_SUBJECT_IDS = new Set(["english", "maths", "hms", "software", "enterprise", "economics", "extracurriculars"]);
 const STORAGE_KEY = "anvis-dashboard-data";
 const LEGACY_STORAGE_KEY = "daydream-desk-data";
 const NOTIFICATION_LOG_KEY = "anvis-dashboard-notification-log";
@@ -103,10 +105,12 @@ export default function DashboardApp() {
   const [syncStatus, setSyncStatus] = useState<"local" | "syncing" | "synced" | "error">("local");
   const [hydrated, setHydrated] = useState(false);
   const [cloudReady, setCloudReady] = useState(false);
-  const [todoComposer, setTodoComposer] = useState<{ subjectId?: string; exercise: boolean } | null>(null);
+  const [todoComposer, setTodoComposer] = useState<TodoComposerState | null>(null);
   const [timerSubject, setTimerSubject] = useState("English");
   const [timerStart, setTimerStart] = useState<number | null>(null);
   const [timerElapsed, setTimerElapsed] = useState(0);
+  const [timerNote, setTimerNote] = useState("");
+  const [timerTargetMinutes, setTimerTargetMinutes] = useState<number | null>(25);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -125,6 +129,11 @@ export default function DashboardApp() {
     const t = setInterval(() => setTimerElapsed(Math.floor((Date.now() - timerStart) / 1000)), 1000);
     return () => clearInterval(t);
   }, [timerStart]);
+
+  useEffect(() => {
+    if (!timerStart || !timerTargetMinutes || timerElapsed < timerTargetMinutes * 60) return;
+    stopTimer(true);
+  }, [timerElapsed, timerStart, timerTargetMinutes]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -148,9 +157,10 @@ export default function DashboardApp() {
       });
       data.meetings.forEach(meeting => {
         const until = new Date(meeting.startsAt).getTime() - Date.now();
-        const key = `meeting-${meeting.id}-${meeting.startsAt}`;
-        if (until <= 0 || until > 15 * 60 * 1000 || sent.has(key)) return;
-        notify(`${meeting.title} starts in ${Math.max(1, Math.ceil(until / 60000))} minutes`, key); sent.add(key); changed = true;
+        const reminderMinutes = meeting.reminderMinutes ?? 15;
+        const key = `meeting-${meeting.id}-${meeting.startsAt}-${reminderMinutes}`;
+        if (until < -60000 || until > reminderMinutes * 60 * 1000 || sent.has(key)) return;
+        notify(until <= 60000 ? `${meeting.title} starts now` : `${meeting.title} starts in ${Math.ceil(until / 60000)} minutes`, key); sent.add(key); changed = true;
       });
       if (changed) localStorage.setItem(NOTIFICATION_LOG_KEY, JSON.stringify([...sent].slice(-250)));
     }
@@ -243,9 +253,23 @@ export default function DashboardApp() {
   function addTodo(subjectId?: string, exercise = false) {
     setTodoComposer({ subjectId, exercise });
   }
+  function editTodo(id: string) {
+    if (data.overallTodos.some(todo => todo.id === id)) return setTodoComposer({ exercise: false, todoId: id });
+    for (const subject of data.subjects) {
+      if (subject.todos.some(todo => todo.id === id)) return setTodoComposer({ subjectId: subject.id, exercise: false, todoId: id });
+      if ((subject.exercises || []).some(todo => todo.id === id)) return setTodoComposer({ subjectId: subject.id, exercise: true, todoId: id });
+    }
+  }
   function saveTodo(text: string, dueDate?: string, reminder?: string) {
     if (!todoComposer) return;
-    const { subjectId, exercise } = todoComposer;
+    const { subjectId, exercise, todoId } = todoComposer;
+    if (todoId) {
+      const replace = (items: Todo[]) => items.map(todo => todo.id === todoId ? { ...todo, text: text.trim(), dueDate, reminder } : todo);
+      update(d => ({ ...d, overallTodos: replace(d.overallTodos), subjects: d.subjects.map(subject => ({ ...subject, todos: replace(subject.todos), exercises: subject.exercises ? replace(subject.exercises) : undefined })) }));
+      setTodoComposer(null);
+      showToast("To-do updated");
+      return;
+    }
     const todo: Todo = { id: uid(), text: text.trim(), done: false, priority: "medium", dueDate, reminder };
     update(d => subjectId ? ({ ...d, subjects: d.subjects.map(s => s.id === subjectId ? { ...s, [exercise ? "exercises" : "todos"]: [...(exercise ? s.exercises || [] : s.todos), todo] } : s) }) : ({ ...d, overallTodos: [...d.overallTodos, todo] }));
     setTodoComposer(null);
@@ -264,22 +288,32 @@ export default function DashboardApp() {
     if (priority === "high") notify("High-priority task added to your focus list");
   }
   function startTimer() { setTimerStart(Date.now()); setTimerElapsed(0); }
-  function stopTimer() {
+  function stopTimer(completed = false) {
     if (!timerStart || timerElapsed < 1) return;
-    const session: StudySession = { id: uid(), subject: timerSubject, startedAt: new Date(timerStart).toISOString(), durationSeconds: timerElapsed };
-    update(d => ({ ...d, studySessions: [...d.studySessions, session] })); setTimerStart(null); setTimerElapsed(0); showToast(`${formatDuration(session.durationSeconds)} logged for ${timerSubject}`);
+    const targetSeconds = timerTargetMinutes ? timerTargetMinutes * 60 : timerElapsed;
+    const session: StudySession = { id: uid(), subject: timerSubject, startedAt: new Date(timerStart).toISOString(), durationSeconds: completed ? targetSeconds : timerElapsed, note: timerNote.trim() || undefined };
+    update(d => ({ ...d, studySessions: [...d.studySessions, session] }));
+    setTimerStart(null); setTimerElapsed(0); setTimerNote("");
+    if (completed) notify(`${timerTargetMinutes}-minute focus finished — lovely work ✦`, `pomodoro-${session.id}`);
+    else showToast(`${formatDuration(session.durationSeconds)} logged for ${timerSubject}`);
   }
-  async function uploadImage(event: ChangeEvent<HTMLInputElement>, target: "visionImages" | "dashboardImages") {
-    const file = event.target.files?.[0]; if (!file) return;
-    showToast("Uploading image…");
-    try {
+  async function uploadImages(event: ChangeEvent<HTMLInputElement>, target: "visionImages" | "dashboardImages") {
+    const files = Array.from(event.target.files || []); if (!files.length) return;
+    const valid = files.filter(file => file.type.startsWith("image/") && file.size <= 10 * 1024 * 1024);
+    if (!valid.length) { showToast("Choose image files smaller than 10 MB"); event.target.value = ""; return; }
+    showToast(`Uploading ${valid.length} ${valid.length === 1 ? "image" : "images"}…`);
+    const base = SUPABASE_URL.replace(/\/$/, "");
+    const results = await Promise.allSettled(valid.map(async file => {
       const path = `anvis-dashboard/${uid()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`;
-      const base = SUPABASE_URL.replace(/\/$/, "");
       const r = await fetch(`${base}/storage/v1/object/vision-board/${path}`, { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": file.type, "x-upsert": "false" }, body: file });
-      if (!r.ok) throw new Error();
+      if (!r.ok) throw new Error(await r.text());
       const url = `${base}/storage/v1/object/public/vision-board/${path}`;
-      update(d => ({ ...d, [target]: [...d[target], { id: uid(), url, caption: file.name.replace(/\.[^.]+$/, "") }] })); showToast("Image added");
-    } catch { showToast("Upload failed. Check that the storage setup SQL has run."); }
+      return { id: uid(), url, caption: file.name.replace(/\.[^.]+$/, "") } as ImageItem;
+    }));
+    const uploaded = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+    if (uploaded.length) update(d => ({ ...d, [target]: [...d[target], ...uploaded] }));
+    const failed = valid.length - uploaded.length;
+    showToast(failed ? `${uploaded.length} added · ${failed} failed` : `${uploaded.length} ${uploaded.length === 1 ? "image" : "images"} added`);
     event.target.value = "";
   }
 
@@ -299,56 +333,72 @@ export default function DashboardApp() {
 
       <section className="main-panel">
         <header className="mobile-header"><button className="brand" onClick={() => setTab("dashboard")}><span className="brand-mark">✦</span><span>Anvi’s <em>dashboard</em></span></button><span>{incomplete} open</span></header>
-        <CountdownRail data={data} now={now} onAdd={() => addCountdown(update)} onRemove={id => update(d => ({ ...d, countdowns: d.countdowns.filter(c => c.id !== id) }))} />
+        <CountdownRail data={data} now={now} onAdd={() => addCountdown(update)} onEdit={countdown => editCountdown(update, countdown)} onRemove={id => update(d => ({ ...d, countdowns: d.countdowns.filter(c => c.id !== id) }))} />
         <div className="page-wrap">
-          {tab === "dashboard" && <DashboardView data={data} now={now} weekSeconds={weekSeconds} setTab={setTab} toggleTodo={toggleTodo} addTodo={addTodo} removeTodo={removeTodo} setPriority={setTodoPriority} update={update} uploadImage={uploadImage} />}
-          {tab === "subjects" && <SubjectsView data={data} selected={selectedSubject} setSelected={setSelectedSubject} update={update} addTodo={addTodo} toggleTodo={toggleTodo} removeTodo={removeTodo} setPriority={setTodoPriority} />}
+          {tab === "dashboard" && <DashboardView data={data} now={now} weekSeconds={weekSeconds} setTab={setTab} toggleTodo={toggleTodo} addTodo={addTodo} editTodo={editTodo} removeTodo={removeTodo} setPriority={setTodoPriority} update={update} uploadImages={uploadImages} />}
+          {tab === "subjects" && <SubjectsView data={data} selected={selectedSubject} setSelected={setSelectedSubject} update={update} addTodo={addTodo} editTodo={editTodo} toggleTodo={toggleTodo} removeTodo={removeTodo} setPriority={setTodoPriority} />}
           {tab === "goals" && <GoalsView data={data} update={update} />}
-          {tab === "resources" && <ResourcesView data={data} update={update} uploadImage={uploadImage} />}
-          {tab === "study" && <StudyView data={data} update={update} subject={timerSubject} setSubject={setTimerSubject} start={timerStart} elapsed={timerElapsed} startTimer={startTimer} stopTimer={stopTimer} showToast={showToast} />}
+          {tab === "resources" && <ResourcesView data={data} update={update} uploadImages={uploadImages} />}
+          {tab === "study" && <StudyView data={data} update={update} subject={timerSubject} setSubject={setTimerSubject} start={timerStart} elapsed={timerElapsed} note={timerNote} setNote={setTimerNote} targetMinutes={timerTargetMinutes} setTargetMinutes={setTimerTargetMinutes} startTimer={startTimer} stopTimer={() => stopTimer(false)} showToast={showToast} />}
           {tab === "settings" && <SettingsView data={data} update={update} notifications={notifications} toggleNotifications={toggleNotifications} sendTestNotification={sendTestNotification} status={syncStatus} />}
         </div>
         <nav className="mobile-nav">{nav.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
       </section>
-      {toast && <div className="toast"><span>✦</span>{toast}</div>}
-      {todoComposer && <TodoComposer target={todoComposer} subjects={data.subjects} onSave={saveTodo} onClose={() => setTodoComposer(null)} />}
+      {toast && <div className="toast"><span>✦</span><div><small>ANVI’S DASHBOARD</small><strong>{toast}</strong></div></div>}
+      {todoComposer && <TodoComposer target={todoComposer} subjects={data.subjects} initial={todoComposer.todoId ? allTodos(data).find(todo => todo.id === todoComposer.todoId) : undefined} onSave={saveTodo} onClose={() => setTodoComposer(null)} />}
     </main>
   );
 }
 
-function CountdownRail({ data, now, onAdd, onRemove }: { data: AppData; now: number; onAdd: () => void; onRemove: (id: string) => void }) {
-  return <div className="countdown-rail"><div className="rail-label"><span>◷</span><div><strong>Countdowns</strong><small>keep going</small></div></div><div className="countdown-scroll">{data.countdowns.map(c => { const diff = new Date(c.date).getTime() - now; const days = Math.max(0, Math.floor(diff / 86400000)); const hours = Math.max(0, Math.floor((diff % 86400000) / 3600000)); return <div className="countdown-chip" style={{ "--chip": c.color } as React.CSSProperties} key={c.id}><button className="chip-delete" onClick={() => onRemove(c.id)} aria-label={`Delete ${c.title}`}>×</button><span><b>{days}</b>d <b>{hours}</b>h</span><small>{c.title}</small></div> })}<button className="add-countdown" onClick={onAdd}>＋<span>Add date</span></button></div></div>;
+function CountdownRail({ data, now, onAdd, onEdit, onRemove }: { data: AppData; now: number; onAdd: () => void; onEdit: (countdown: Countdown) => void; onRemove: (id: string) => void }) {
+  const ordered = [...data.countdowns].sort((a, b) => {
+    const aTime = new Date(a.date).getTime(), bTime = new Date(b.date).getTime();
+    if ((aTime < now) !== (bTime < now)) return aTime < now ? 1 : -1;
+    return aTime - bTime;
+  });
+  return <div className="countdown-rail"><div className="rail-label"><span>◷</span><div><strong>Countdowns</strong><small>next dates first</small></div></div><div className="countdown-scroll">{ordered.map(c => { const diff = Math.max(0, new Date(c.date).getTime() - now); const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); return <div className="countdown-chip" style={{ "--chip": c.color } as React.CSSProperties} key={c.id}><div className="chip-actions"><button onClick={() => onEdit(c)} aria-label={`Edit ${c.title}`}>✎</button><button onClick={() => onRemove(c.id)} aria-label={`Delete ${c.title}`}>×</button></div><span><b>{days}</b>d <b>{hours}</b>h</span><small>{c.title}</small></div> })}<button className="add-countdown" onClick={onAdd}>＋<span>Add date</span></button></div></div>;
 }
 
-function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, removeTodo, setPriority, update, uploadImage }: { data: AppData; now: number; weekSeconds: number; setTab: (t: Tab) => void; toggleTodo: (id: string) => void; addTodo: (s?: string, e?: boolean) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void; update: (f: (d: AppData) => AppData) => void; uploadImage: (e: ChangeEvent<HTMLInputElement>, t: "visionImages" | "dashboardImages") => void }) {
+function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTodo, removeTodo, setPriority, update, uploadImages }: { data: AppData; now: number; weekSeconds: number; setTab: (t: Tab) => void; toggleTodo: (id: string) => void; addTodo: (s?: string, e?: boolean) => void; editTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void; update: (f: (d: AppData) => AppData) => void; uploadImages: (e: ChangeEvent<HTMLInputElement>, t: "visionImages" | "dashboardImages") => void }) {
   const date = new Intl.DateTimeFormat("en-AU", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
+  const today = toDateInput(new Date());
+  const todayItems = [
+    ...data.overallTodos.map(todo => ({ todo, source: "Personal", color: "#f6cf9e" })),
+    ...data.subjects.flatMap(subject => [...subject.todos, ...(subject.exercises || [])].map(todo => ({ todo, source: subject.name, color: subject.color }))),
+  ].filter(item => !item.todo.done && item.todo.dueDate === today);
   return <>
     <section className="hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(24,31,44,.82), rgba(24,31,44,.2)), url(${data.profile.heroImage})` }}><div><span className="eyebrow">{date}</span><h1>Hi {data.profile.name},<br /><em>make today count.</em></h1><p>{data.profile.quote}</p></div><div className="hero-stats"><span><b>{data.studySessions.filter(s => isToday(s.startedAt)).length}</b> sessions today</span><span><b>{formatDuration(weekSeconds)}</b> this week</span></div></section>
+    <section className="card day-plan"><CardHeading kicker="TODAY" title="What to do for the day" /><p>{todayItems.length ? `${todayItems.length} ${todayItems.length === 1 ? "thing" : "things"} due today. Finish one, and it disappears from this list.` : "Nothing due today — your day is clear."}</p>{todayItems.map(item => <div className="day-plan-row" key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)} aria-label={`Complete ${item.todo.text}`} /><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)} aria-label={`Edit ${item.todo.text}`}>Edit</button></div>)}</section>
     <div className="dashboard-grid">
-      <section className="card task-card"><CardHeading kicker="THE BIG PICTURE" title="Everything to do" action="＋ Add personal" onAction={() => addTodo()} /><div className="task-summary"><span><b>{countOpen(data)}</b> still open</span><div><i style={{ width: `${completion(data)}%` }} /></div><small>{completion(data)}% complete</small></div><TaskGroup title="Personal" color="#f6cf9e" todos={data.overallTodos} {...{ toggleTodo, removeTodo, setPriority }} />{data.subjects.map(s => <div key={s.id}><TaskGroup title={s.name} color={s.color} todos={s.todos} {...{ toggleTodo, removeTodo, setPriority }} /><button className="inline-add" onClick={() => addTodo(s.id)}>＋ Add {s.name} task</button>{s.exercises && <TaskGroup title="Required exercises / chapters" subtitle="Maths" color="#87b3f8" todos={s.exercises} nested {...{ toggleTodo, removeTodo, setPriority }} />}{s.exercises && <button className="inline-add nested-add" onClick={() => addTodo(s.id, true)}>＋ Add required exercise</button>}</div>)}</section>
+      <section className="card task-card"><CardHeading kicker="THE BIG PICTURE" title="Everything to do" action="＋ Add personal" onAction={() => addTodo()} /><div className="task-summary"><span><b>{countOpen(data)}</b> still open</span><div><i style={{ width: `${completion(data)}%` }} /></div><small>{completion(data)}% complete</small></div><TaskGroup title="Personal" color="#f6cf9e" todos={data.overallTodos} {...{ toggleTodo, editTodo, removeTodo, setPriority }} />{data.subjects.map(s => <div key={s.id}><TaskGroup title={s.name} color={s.color} todos={s.todos} {...{ toggleTodo, editTodo, removeTodo, setPriority }} /><button className="inline-add" onClick={() => addTodo(s.id)}>＋ Add {s.name} task</button>{s.exercises && <TaskGroup title="Required exercises / chapters" subtitle="Maths" color="#87b3f8" todos={s.exercises} nested {...{ toggleTodo, editTodo, removeTodo, setPriority }} />}{s.exercises && <button className="inline-add nested-add" onClick={() => addTodo(s.id, true)}>＋ Add required exercise</button>}</div>)}</section>
       <aside className="dashboard-side"><section className="card today-card"><CardHeading kicker="FOCUS" title="This week" action="View goals →" onAction={() => setTab("goals")} />{data.goals.week.map(g => <label className="goal-line" key={g.id}><input type="checkbox" checked={g.done} onChange={() => update(d => ({ ...d, goals: { ...d.goals, week: d.goals.week.map(x => x.id === g.id ? { ...x, done: !x.done } : x) } }))} /><span>{g.text}</span></label>)}</section>
-      <section className="card photo-card"><CardHeading kicker="PINBOARD" title="A little inspiration" />{data.dashboardImages[0] ? <div className="dashboard-photo"><img src={data.dashboardImages[0].url} alt={data.dashboardImages[0].caption} /><span>{data.dashboardImages[0].caption}</span></div> : <div className="empty-image">Add a mood image</div>}<div className="photo-actions"><label className="button secondary">Upload image<input hidden type="file" accept="image/*" onChange={e => uploadImage(e, "dashboardImages")} /></label><button className="text-button" onClick={() => addImageUrl(update, "dashboardImages")}>Paste URL</button></div></section>
+      <section className="card photo-card"><CardHeading kicker="PINBOARD" title="A little inspiration" />{data.dashboardImages[0] ? <div className="dashboard-photo"><img src={data.dashboardImages[0].url} alt={data.dashboardImages[0].caption} /><span>{data.dashboardImages[0].caption}</span></div> : <div className="empty-image">Add a mood image</div>}<div className="photo-actions"><label className="button secondary">Upload images<input hidden multiple type="file" accept="image/*" onChange={e => uploadImages(e, "dashboardImages")} /></label><button className="text-button" onClick={() => addImageUrl(update, "dashboardImages")}>Paste URL</button></div></section>
       <section className="card quick-note"><CardHeading kicker="SCRATCHPAD" title="Quick note" /><textarea value={data.notes} onChange={e => update(d => ({ ...d, notes: e.target.value }))} aria-label="Quick notes" /><small>Saved automatically</small></section></aside>
     </div>
     <PlannerHub data={data} update={update} />
   </>;
 }
 
-function SubjectsView({ data, selected, setSelected, update, addTodo, toggleTodo, removeTodo, setPriority }: { data: AppData; selected: string; setSelected: (id: string) => void; update: (f: (d: AppData) => AppData) => void; addTodo: (s?: string, e?: boolean) => void; toggleTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
+function SubjectsView({ data, selected, setSelected, update, addTodo, editTodo, toggleTodo, removeTodo, setPriority }: { data: AppData; selected: string; setSelected: (id: string) => void; update: (f: (d: AppData) => AppData) => void; addTodo: (s?: string, e?: boolean) => void; editTodo: (id: string) => void; toggleTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
   const subject = data.subjects.find(s => s.id === selected) || data.subjects[0];
   function change(field: "goodAt" | "improve", value: string) { update(d => ({ ...d, subjects: d.subjects.map(s => s.id === subject.id ? { ...s, [field]: value } : s) })); }
-  return <><PageTitle eyebrow="ACADEMIC WORKSPACE" title="One place for every subject." copy="Choose a subject, see what matters, and keep your reflections close to the work." /><div className="subject-tabs">{data.subjects.map(s => <button key={s.id} className={selected === s.id ? "active" : ""} style={{ "--subject": s.color } as React.CSSProperties} onClick={() => setSelected(s.id)}><span style={{ background: s.color }}>{s.name.slice(0, 2)}</span>{s.name}</button>)}<button className="add-subject" onClick={() => addNewSubject(update)}>＋ New project</button></div><section className="subject-hero" style={{ "--subject": subject.color } as React.CSSProperties}><span>{subject.name.slice(0, 2)}</span><div><small>SUBJECT SPACE</small><h2>{subject.name}</h2><p>{subject.todos.filter(t => !t.done).length + (subject.exercises?.filter(t => !t.done).length || 0)} open items</p></div></section><div className="subject-grid"><section className="card"><CardHeading kicker="TO DO" title={`${subject.name} tasks`} action="＋ Add task" onAction={() => addTodo(subject.id)} /><TaskGroup title="Current work" color={subject.color} todos={subject.todos} hideHeading {...{ toggleTodo, removeTodo, setPriority }} />{subject.exercises && <><div className="exercise-header"><div><small>MATHS REQUIREMENT</small><h3>Required exercises / chapters</h3></div><button onClick={() => addTodo(subject.id, true)}>＋ Add</button></div><TaskGroup title="Exercises" color={subject.color} todos={subject.exercises} hideHeading {...{ toggleTodo, removeTodo, setPriority }} /></>}</section><section className="insight-stack"><label className="insight good"><span>✦</span><div><small>SUBJECT INSIGHT</small><strong>What I’m good at</strong></div><textarea value={subject.goodAt} onChange={e => change("goodAt", e.target.value)} /></label><label className="insight improve"><span>↗</span><div><small>NEXT STEP</small><strong>Where to improve</strong></div><textarea value={subject.improve} onChange={e => change("improve", e.target.value)} /></label></section></div></>;
+  function removeSubject() {
+    if (REQUIRED_SUBJECT_IDS.has(subject.id) || !confirm(`Remove ${subject.name} and all of its tasks?`)) return;
+    update(d => ({ ...d, subjects: d.subjects.filter(item => item.id !== subject.id) }));
+    setSelected("english");
+  }
+  return <><PageTitle eyebrow="ACADEMIC WORKSPACE" title="One place for every subject." copy="Choose a subject, see what matters, and keep your reflections close to the work." /><div className="subject-tabs">{data.subjects.map(s => <button key={s.id} className={selected === s.id ? "active" : ""} style={{ "--subject": s.color } as React.CSSProperties} onClick={() => setSelected(s.id)}><span style={{ background: s.color }}>{s.name.slice(0, 2)}</span>{s.name}</button>)}<button className="add-subject" onClick={() => addNewSubject(update)}>＋ New project</button></div><section className="subject-hero" style={{ "--subject": subject.color } as React.CSSProperties}><span>{subject.name.slice(0, 2)}</span><div><small>SUBJECT SPACE</small><h2>{subject.name}</h2><p>{subject.todos.filter(t => !t.done).length + (subject.exercises?.filter(t => !t.done).length || 0)} open items</p></div>{!REQUIRED_SUBJECT_IDS.has(subject.id) && <button className="remove-subject" onClick={removeSubject}>Remove subject</button>}</section><div className="subject-grid"><section className="card"><CardHeading kicker="TO DO" title={`${subject.name} tasks`} action="＋ Add task" onAction={() => addTodo(subject.id)} /><TaskGroup title="Current work" color={subject.color} todos={subject.todos} hideHeading {...{ toggleTodo, editTodo, removeTodo, setPriority }} />{subject.exercises && <><div className="exercise-header"><div><small>MATHS REQUIREMENT</small><h3>Required exercises / chapters</h3></div><button onClick={() => addTodo(subject.id, true)}>＋ Add</button></div><TaskGroup title="Exercises" color={subject.color} todos={subject.exercises} hideHeading {...{ toggleTodo, editTodo, removeTodo, setPriority }} /></>}</section><section className="insight-stack"><label className="insight good"><span>✦</span><div><small>SUBJECT INSIGHT</small><strong>What I’m good at</strong></div><textarea value={subject.goodAt} onChange={e => change("goodAt", e.target.value)} /></label><label className="insight improve"><span>↗</span><div><small>NEXT STEP</small><strong>Where to improve</strong></div><textarea value={subject.improve} onChange={e => change("improve", e.target.value)} /></label></section></div></>;
 }
 
 function GoalsView({ data, update }: { data: AppData; update: (f: (d: AppData) => AppData) => void }) {
   return <><PageTitle eyebrow="TIME HORIZONS" title="Aim far. Move gently." copy="Turn the future into four clear distances, then focus on the next honest step." /><div className="goal-grid">{(Object.keys(horizons) as (keyof typeof horizons)[]).map((key, i) => <section className="goal-column card" key={key} style={{ "--subject": swatches[i] } as React.CSSProperties}><div className="goal-number">0{i + 1}</div><CardHeading kicker={key === "year" ? "HSC PREP" : "GOALS"} title={horizons[key]} />{data.goals[key].map(g => <div className={`goal-item ${g.done ? "done" : ""}`} key={g.id}><button onClick={() => update(d => ({ ...d, goals: { ...d.goals, [key]: d.goals[key].map(x => x.id === g.id ? { ...x, done: !x.done } : x) } }))}>{g.done ? "✓" : ""}</button><span>{g.text}</span><button className="delete" onClick={() => update(d => ({ ...d, goals: { ...d.goals, [key]: d.goals[key].filter(x => x.id !== g.id) } }))}>×</button></div>)}<button className="goal-add" onClick={() => addGoal(update, key)}>＋ Add a goal</button></section>)}</div></>;
 }
 
-function ResourcesView({ data, update, uploadImage }: { data: AppData; update: (f: (d: AppData) => AppData) => void; uploadImage: (e: ChangeEvent<HTMLInputElement>, t: "visionImages" | "dashboardImages") => void }) {
-  return <><PageTitle eyebrow="RESOURCES & VISION" title="Keep the useful and beautiful close." copy="Links for quick access, a scratchpad for messy thoughts, and images that pull you forward." /><div className="resource-top"><section className="card"><CardHeading kicker="BOOKMARKS" title="Quick links" action="＋ Add link" onAction={() => addBookmark(update)} /><div className="bookmark-grid">{data.bookmarks.map((b, i) => <a href={normaliseUrl(b.url)} target="_blank" rel="noreferrer" key={b.id}><span style={{ background: swatches[i % swatches.length] }}>{b.title.slice(0, 1).toUpperCase()}</span><div><strong>{b.title}</strong><small>{b.url.replace(/^https?:\/\//, "")}</small></div><b>↗</b></a>)}</div></section><section className="card resource-notes"><CardHeading kicker="QUICK NOTES" title="Scratchpad" /><textarea value={data.notes} onChange={e => update(d => ({ ...d, notes: e.target.value }))} /><small>Autosaves as you type</small></section></div><section className="vision-section"><div className="vision-heading"><div><span className="eyebrow">VISION BOARD</span><h2>What I’m moving toward</h2></div><div><label className="button">Upload images<input hidden type="file" accept="image/*" onChange={e => uploadImage(e, "visionImages")} /></label><button className="button secondary" onClick={() => addImageUrl(update, "visionImages")}>Paste image URL</button></div></div><div className="vision-grid">{data.visionImages.map((img, i) => <figure className={`vision-${i % 5}`} key={img.id}><img src={img.url} alt={img.caption} /><figcaption>{img.caption}<button onClick={() => update(d => ({ ...d, visionImages: d.visionImages.filter(x => x.id !== img.id) }))}>×</button></figcaption></figure>)}</div></section></>;
+function ResourcesView({ data, update, uploadImages }: { data: AppData; update: (f: (d: AppData) => AppData) => void; uploadImages: (e: ChangeEvent<HTMLInputElement>, t: "visionImages" | "dashboardImages") => void }) {
+  return <><PageTitle eyebrow="RESOURCES & VISION" title="Keep the useful and beautiful close." copy="Links for quick access, a scratchpad for messy thoughts, and images that pull you forward." /><div className="resource-top"><section className="card"><CardHeading kicker="BOOKMARKS" title="Quick links" action="＋ Add link" onAction={() => addBookmark(update)} /><div className="bookmark-grid">{data.bookmarks.map((b, i) => <a href={normaliseUrl(b.url)} target="_blank" rel="noreferrer" key={b.id}><span style={{ background: swatches[i % swatches.length] }}>{b.title.slice(0, 1).toUpperCase()}</span><div><strong>{b.title}</strong><small>{b.url.replace(/^https?:\/\//, "")}</small></div><b>↗</b></a>)}</div></section><section className="card resource-notes"><CardHeading kicker="QUICK NOTES" title="Scratchpad" /><textarea value={data.notes} onChange={e => update(d => ({ ...d, notes: e.target.value }))} /><small>Autosaves as you type</small></section></div><section className="vision-section"><div className="vision-heading"><div><span className="eyebrow">VISION BOARD</span><h2>What I’m moving toward</h2></div><div><label className="button">Bulk upload photos<input hidden multiple type="file" accept="image/*" onChange={e => uploadImages(e, "visionImages")} /></label><button className="button secondary" onClick={() => addImageUrl(update, "visionImages")}>Paste image URL</button></div></div><div className="vision-grid">{data.visionImages.map(img => <figure key={img.id}><img src={img.url} alt={img.caption} /><figcaption>{img.caption}<button onClick={() => update(d => ({ ...d, visionImages: d.visionImages.filter(x => x.id !== img.id) }))}>×</button></figcaption></figure>)}</div></section></>;
 }
 
-function StudyView({ data, update, subject, setSubject, start, elapsed, startTimer, stopTimer, showToast }: { data: AppData; update: (f: (d: AppData) => AppData) => void; subject: string; setSubject: (s: string) => void; start: number | null; elapsed: number; startTimer: () => void; stopTimer: () => void; showToast: (message: string) => void }) {
+function StudyView({ data, update, subject, setSubject, start, elapsed, note, setNote, targetMinutes, setTargetMinutes, startTimer, stopTimer, showToast }: { data: AppData; update: (f: (d: AppData) => AppData) => void; subject: string; setSubject: (s: string) => void; start: number | null; elapsed: number; note: string; setNote: (value: string) => void; targetMinutes: number | null; setTargetMinutes: (value: number | null) => void; startTimer: () => void; stopTimer: () => void; showToast: (message: string) => void }) {
   const current = new Date();
   const [manualDate, setManualDate] = useState(toDateInput(current));
   const [manualTime, setManualTime] = useState(toTimeInput(current));
@@ -373,6 +423,7 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, startTim
   const daily = lastSevenDays().map(day => ({ ...day, seconds: data.studySessions.filter(s => localDayKey(new Date(s.startedAt)) === day.key).reduce((a, s) => a + s.durationSeconds, 0) }));
   const maxDay = Math.max(...daily.map(d => d.seconds), 1);
   const sessions = [...data.studySessions].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  const displayedSeconds = start && targetMinutes ? Math.max(0, targetMinutes * 60 - elapsed) : elapsed;
 
   function addManualSession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -403,10 +454,14 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, startTim
     <PageTitle eyebrow="STUDY TRACKER" title="Make every study session count." copy="Run the live timer or add past sessions manually. Your dashboard turns every entry into clear daily, weekly and subject statistics." />
     <div className="study-grid">
       <section className="timer-card">
-        <div className={`timer-orbit ${start ? "running" : ""}`}><small>{start ? "FOCUSING ON" : "READY WHEN YOU ARE"}</small><strong>{formatClock(elapsed)}</strong><span>{subject}</span></div>
-        <select value={subject} onChange={e => setSubject(e.target.value)} disabled={!!start} aria-label="Timer subject">{data.subjects.map(s => <option key={s.id}>{s.name}</option>)}</select>
+        <div className={`timer-orbit ${start ? "running" : ""}`}><small>{start ? targetMinutes ? "TIME LEFT" : "FOCUSING ON" : "READY WHEN YOU ARE"}</small><strong>{formatClock(displayedSeconds)}</strong><span>{subject}</span></div>
+        <div className="timer-setup">
+          <label>Subject<select value={subject} onChange={e => setSubject(e.target.value)} disabled={!!start} aria-label="Timer subject">{data.subjects.map(s => <option key={s.id}>{s.name}</option>)}</select></label>
+          <label>What are you working on?<input value={note} onChange={e => setNote(e.target.value)} disabled={!!start} placeholder="e.g. Calculus chapter 7D" /></label>
+          <div className="timer-length"><small>SESSION LENGTH</small><div>{[{ label: "Open", value: null }, { label: "25 min", value: 25 }, { label: "50 min", value: 50 }].map(option => <button type="button" disabled={!!start} className={targetMinutes === option.value ? "active" : ""} onClick={() => setTargetMinutes(option.value)} key={option.label}>{option.label}</button>)}<label>Custom<input disabled={!!start} type="number" min="1" max="360" value={targetMinutes ?? ""} onChange={e => setTargetMinutes(e.target.value ? Math.max(1, Math.min(360, Number(e.target.value))) : null)} /><span>min</span></label></div></div>
+        </div>
         <button className={start ? "stop-button" : "start-button"} onClick={start ? stopTimer : startTimer}>{start ? "■  Stop & log session" : "▶  Start study session"}</button>
-        <p>Sessions are saved when you press stop.</p>
+        <p>{targetMinutes ? `This session logs automatically after ${targetMinutes} minutes.` : "Open sessions are saved when you press stop."}</p>
       </section>
       <section className="stats-column">
         <div className="mini-stats expanded">
@@ -438,18 +493,18 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, startTim
   </>;
 }
 
-function TodoComposer({ target, subjects, onSave, onClose }: { target: { subjectId?: string; exercise: boolean }; subjects: Subject[]; onSave: (text: string, dueDate?: string, reminder?: string) => void; onClose: () => void }) {
-  const [text, setText] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [reminder, setReminder] = useState("");
+function TodoComposer({ target, subjects, initial, onSave, onClose }: { target: TodoComposerState; subjects: Subject[]; initial?: Todo; onSave: (text: string, dueDate?: string, reminder?: string) => void; onClose: () => void }) {
+  const [text, setText] = useState(initial?.text || "");
+  const [dueDate, setDueDate] = useState(initial?.dueDate || "");
+  const [reminder, setReminder] = useState(initial?.reminder ? toDateTimeInput(new Date(initial.reminder)) : "");
   const subject = subjects.find(s => s.id === target.subjectId);
-  const title = target.exercise ? "Add required exercise" : subject ? `Add ${subject.name} task` : "Add personal todo";
+  const title = initial ? "Edit to-do" : target.exercise ? "Add required exercise" : subject ? `Add ${subject.name} task` : "Add personal todo";
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!text.trim()) return;
     onSave(text, dueDate || undefined, reminder ? new Date(reminder).toISOString() : undefined);
   }
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">NEW TO-DO</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><label>Remind me <small>optional</small><input type="datetime-local" value={reminder} onChange={event => setReminder(event.target.value)} /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">Add to-do</button></div></form></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">{initial ? "UPDATE TO-DO" : "NEW TO-DO"}</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><label>Remind me <small>optional</small><input type="datetime-local" value={reminder} onChange={event => setReminder(event.target.value)} /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">{initial ? "Save changes" : "Add to-do"}</button></div></form></div>;
 }
 
 function PlannerHub({ data, update }: { data: AppData; update: (f: (d: AppData) => AppData) => void }) {
@@ -459,7 +514,11 @@ function PlannerHub({ data, update }: { data: AppData; update: (f: (d: AppData) 
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState(toDateInput(new Date()));
   const [meetingTime, setMeetingTime] = useState("16:00");
+  const [meetingEndTime, setMeetingEndTime] = useState("17:00");
   const [meetingDetails, setMeetingDetails] = useState("");
+  const [meetingReminder, setMeetingReminder] = useState("15");
+  const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null);
+  const [meetingError, setMeetingError] = useState("");
   const todayKey = toDateInput(new Date());
   const datedTodos = [
     ...data.overallTodos.filter(todo => todo.dueDate).map(todo => ({ todo, source: "Personal", color: "#f6cf9e" })),
@@ -478,13 +537,27 @@ function PlannerHub({ data, update }: { data: AppData; update: (f: (d: AppData) 
   const cells: (number | null)[] = [...Array.from({ length: leadingBlanks }, () => null), ...Array.from({ length: daysInMonth }, (_, index) => index + 1)];
 
   function changeMonth(offset: number) { setMonth(current => new Date(current.getFullYear(), current.getMonth() + offset, 1, 12)); }
-  function addMeeting(event: FormEvent<HTMLFormElement>) {
+  function resetMeetingForm() {
+    setMeetingTitle(""); setMeetingDetails(""); setMeetingReminder("15"); setEditingMeetingId(null); setMeetingError(""); setShowMeetingForm(false);
+  }
+  function openNewMeeting() {
+    if (showMeetingForm && !editingMeetingId) return resetMeetingForm();
+    setEditingMeetingId(null); setMeetingTitle(""); setMeetingDetails(""); setMeetingDate(toDateInput(new Date())); setMeetingTime("16:00"); setMeetingEndTime("17:00"); setMeetingReminder("15"); setMeetingError(""); setShowMeetingForm(true);
+  }
+  function editMeeting(meeting: Meeting) {
+    const startsAt = new Date(meeting.startsAt);
+    const endsAt = meeting.endsAt ? new Date(meeting.endsAt) : new Date(startsAt.getTime() + 60 * 60 * 1000);
+    setEditingMeetingId(meeting.id); setMeetingTitle(meeting.title); setMeetingDate(toDateInput(startsAt)); setMeetingTime(toTimeInput(startsAt)); setMeetingEndTime(toTimeInput(endsAt)); setMeetingDetails(meeting.details || ""); setMeetingReminder(String(meeting.reminderMinutes ?? 15)); setMeetingError(""); setShowMeetingForm(true);
+  }
+  function saveMeeting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const startsAt = new Date(`${meetingDate}T${meetingTime}`);
+    const endsAt = new Date(`${meetingDate}T${meetingEndTime}`);
     if (!meetingTitle.trim() || Number.isNaN(startsAt.getTime())) return;
-    const meeting: Meeting = { id: uid(), title: meetingTitle.trim(), startsAt: startsAt.toISOString(), details: meetingDetails.trim() || undefined };
-    update(d => ({ ...d, meetings: [...d.meetings, meeting] }));
-    setMeetingTitle(""); setMeetingDetails(""); setShowMeetingForm(false);
+    if (Number.isNaN(endsAt.getTime()) || endsAt <= startsAt) { setMeetingError("End time needs to be after the start time."); return; }
+    const meeting: Meeting = { id: editingMeetingId || uid(), title: meetingTitle.trim(), startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), details: meetingDetails.trim() || undefined, reminderMinutes: Number(meetingReminder) };
+    update(d => ({ ...d, meetings: editingMeetingId ? d.meetings.map(item => item.id === editingMeetingId ? meeting : item) : [...d.meetings, meeting] }));
+    resetMeetingForm();
   }
 
   return <section className="planner-grid">
@@ -494,14 +567,14 @@ function PlannerHub({ data, update }: { data: AppData; update: (f: (d: AppData) 
       <div className="calendar-grid">{cells.map((day, index) => {
         if (!day) return <div className="calendar-cell blank" key={`blank-${index}`} />;
         const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-        const taskEvents = datedTodos.filter(item => item.todo.dueDate === key);
+        const taskEvents = datedTodos.filter(item => !item.todo.done && item.todo.dueDate === key);
         const meetingEvents = data.meetings.filter(meeting => localDayKey(new Date(meeting.startsAt)) === key);
         const events = [...taskEvents.map(item => ({ id: item.todo.id, label: `${item.source}: ${item.todo.text}`, color: item.color, type: "task" })), ...meetingEvents.map(meeting => ({ id: meeting.id, label: meeting.title, color: "#c7b8ee", type: "meeting" }))];
         return <div className={`calendar-cell ${key === todayKey ? "today" : ""}`} key={key}><b>{day}</b><div>{events.slice(0, 2).map(event => <span className={`calendar-event ${event.type}`} style={{ "--event": event.color } as React.CSSProperties} title={event.label} key={`${event.type}-${event.id}`}><i />{event.label}</span>)}{events.length > 2 && <small>+{events.length - 2} more</small>}</div></div>;
       })}</div>
       <div className="due-agenda"><div className="agenda-title"><strong>What’s due next</strong><small>Tasks with completion dates</small></div>{dueAgenda.length ? dueAgenda.map(item => <div className="due-agenda-row" key={item.todo.id}><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><time className={(item.todo.dueDate || "") < todayKey ? "overdue" : ""}>{(item.todo.dueDate || "") < todayKey ? "Overdue · " : ""}{formatDueDate(item.todo.dueDate || "")}</time></div>) : <div className="empty-state">Add a completion date to a to-do and it will appear here.</div>}</div>
     </div>
-    <div className="card meetings-card"><CardHeading kicker="SCHEDULE" title="Upcoming meetings" action={showMeetingForm ? "Close" : "＋ Add meeting"} onAction={() => setShowMeetingForm(value => !value)} />{showMeetingForm && <form className="meeting-form" onSubmit={addMeeting}><label>Meeting<input autoFocus value={meetingTitle} onChange={event => setMeetingTitle(event.target.value)} placeholder="Meeting title" required /></label><div><label>Date<input type="date" value={meetingDate} onChange={event => setMeetingDate(event.target.value)} required /></label><label>Time<input type="time" value={meetingTime} onChange={event => setMeetingTime(event.target.value)} required /></label></div><label>Details <small>optional</small><input value={meetingDetails} onChange={event => setMeetingDetails(event.target.value)} placeholder="Location, link or reminder" /></label><button className="button wide" type="submit">Save meeting</button></form>}<div className="meeting-list">{upcomingMeetings.length ? upcomingMeetings.map(meeting => <div className="meeting-row" key={meeting.id}><time><b>{new Date(meeting.startsAt).getDate()}</b><span>{new Date(meeting.startsAt).toLocaleDateString("en-AU", { month: "short" })}</span></time><div><strong>{meeting.title}</strong><small>{new Date(meeting.startsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}{meeting.details ? ` · ${meeting.details}` : ""}</small></div><button className="delete" onClick={() => update(d => ({ ...d, meetings: d.meetings.filter(item => item.id !== meeting.id) }))} aria-label={`Delete ${meeting.title}`}>×</button></div>) : <div className="empty-state">No upcoming meetings yet.</div>}</div></div>
+    <div className="card meetings-card"><CardHeading kicker="SCHEDULE" title="Upcoming meetings" action={showMeetingForm && !editingMeetingId ? "Close" : "＋ Add meeting"} onAction={openNewMeeting} />{showMeetingForm && <form className="meeting-form" onSubmit={saveMeeting}><span className="form-mode">{editingMeetingId ? "EDIT MEETING" : "NEW MEETING"}</span><label>Meeting<input autoFocus value={meetingTitle} onChange={event => setMeetingTitle(event.target.value)} placeholder="Meeting title" required /></label><div><label>Date<input type="date" value={meetingDate} onChange={event => setMeetingDate(event.target.value)} required /></label><label>Start time<input type="time" value={meetingTime} onChange={event => setMeetingTime(event.target.value)} required /></label><label>End time<input type="time" value={meetingEndTime} onChange={event => setMeetingEndTime(event.target.value)} required /></label><label>Alert me<select value={meetingReminder} onChange={event => setMeetingReminder(event.target.value)}>{[[0, "At start"], [5, "5 min before"], [10, "10 min before"], [15, "15 min before"], [30, "30 min before"], [60, "1 hour before"], [1440, "1 day before"]].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div><label>Details <small>optional</small><input value={meetingDetails} onChange={event => setMeetingDetails(event.target.value)} placeholder="Location, link or notes" /></label>{meetingError && <p className="form-error">{meetingError}</p>}<div className="meeting-form-actions"><button className="button secondary" type="button" onClick={resetMeetingForm}>Cancel</button><button className="button" type="submit">{editingMeetingId ? "Save changes" : "Save meeting"}</button></div></form>}<div className="meeting-list">{upcomingMeetings.length ? upcomingMeetings.map(meeting => <div className="meeting-row" key={meeting.id}><time><b>{new Date(meeting.startsAt).getDate()}</b><span>{new Date(meeting.startsAt).toLocaleDateString("en-AU", { month: "short" })}</span></time><div><strong>{meeting.title}</strong><small>{formatMeetingTime(meeting)}{meeting.details ? ` · ${meeting.details}` : ""}</small><span className="meeting-reminder">Alert {formatReminderLead(meeting.reminderMinutes ?? 15)}</span></div><div className="meeting-actions"><button onClick={() => editMeeting(meeting)}>Edit</button><button onClick={() => update(d => ({ ...d, meetings: d.meetings.filter(item => item.id !== meeting.id) }))}>Cancel</button></div></div>) : <div className="empty-state">No upcoming meetings yet.</div>}</div></div>
   </section>;
 }
 
@@ -511,7 +584,7 @@ function SettingsView({ data, update, notifications, toggleNotifications, sendTe
   return <><PageTitle eyebrow="SETTINGS" title="Make the desk yours." copy="Tune the visuals, reminders and installation options, and keep a portable backup whenever you like." /><div className="settings-grid">
     <section className="card settings-card"><CardHeading kicker="AESTHETIC" title="Look & feel" /><label>Your name<input value={data.profile.name} onChange={e => update(d => ({ ...d, profile: { ...d.profile, name: e.target.value } }))} /></label><label>Dashboard hero image URL<input value={data.profile.heroImage} onChange={e => update(d => ({ ...d, profile: { ...d.profile, heroImage: e.target.value } }))} /></label><label>Daily line<input value={data.profile.quote} onChange={e => update(d => ({ ...d, profile: { ...d.profile, quote: e.target.value } }))} /></label><div className="preview-strip" style={{ backgroundImage: `url(${data.profile.heroImage})` }} /></section>
     <section className="card settings-card"><CardHeading kicker="SUPABASE" title="Automatic cloud sync" /><p>There is nothing to enter or connect. This dashboard opens its shared Supabase record automatically and saves every change as you make it.</p><div className="setting-row"><div><strong>{status === "synced" ? "✓ Connected to Supabase" : status === "syncing" ? "Connecting to Supabase…" : status === "error" ? "Supabase setup required" : "Preparing cloud sync…"}</strong><small>{status === "synced" ? "Your data is available across devices" : status === "error" ? "Run the included setup SQL once" : "Loading your dashboard"}</small></div><span className={`sync-dot ${status}`} /></div></section>
-    <section className="card settings-card notification-card"><CardHeading kicker="NOTIFICATIONS" title="Reminders & mornings" /><div className="setting-row"><div><strong>Web notifications</strong><small>Todo reminders and 15-minute meeting alerts</small></div><button className={`toggle ${notifications ? "on" : ""}`} onClick={toggleNotifications} aria-label="Toggle web notifications"><i /></button></div><div className="setting-row"><div><strong>Morning day-ahead summary</strong><small>Tasks due, overdue items and today’s meetings</small></div><button className={`toggle ${data.notificationSettings.morningSummary ? "on" : ""}`} onClick={() => update(d => ({ ...d, notificationSettings: { ...d.notificationSettings, morningSummary: !d.notificationSettings.morningSummary } }))} aria-label="Toggle morning summary"><i /></button></div><label className="morning-time">Morning summary time<input type="time" value={data.notificationSettings.morningTime} onChange={event => update(d => ({ ...d, notificationSettings: { ...d.notificationSettings, morningTime: event.target.value } }))} /></label><button className="button secondary test-notification" onClick={sendTestNotification}>Send test notification</button><small className="privacy-note">The summary appears the first time the dashboard is open at or after this time. Fully closed-app delivery needs a server push scheduler.</small></section>
+    <section className="card settings-card notification-card"><CardHeading kicker="NOTIFICATIONS" title="Reminders & mornings" /><div className="setting-row"><div><strong>Web notifications</strong><small>Todo reminders and your chosen meeting alert times</small></div><button className={`toggle ${notifications ? "on" : ""}`} onClick={toggleNotifications} aria-label="Toggle web notifications"><i /></button></div><div className="setting-row"><div><strong>Morning day-ahead summary</strong><small>Tasks due, overdue items and today’s meetings</small></div><button className={`toggle ${data.notificationSettings.morningSummary ? "on" : ""}`} onClick={() => update(d => ({ ...d, notificationSettings: { ...d.notificationSettings, morningSummary: !d.notificationSettings.morningSummary } }))} aria-label="Toggle morning summary"><i /></button></div><label className="morning-time">Morning summary time<input type="time" value={data.notificationSettings.morningTime} onChange={event => update(d => ({ ...d, notificationSettings: { ...d.notificationSettings, morningTime: event.target.value } }))} /></label><button className="button secondary test-notification" onClick={sendTestNotification}>Send test notification</button><small className="privacy-note">The summary appears the first time the dashboard is open at or after this time. Fully closed-app delivery needs a server push scheduler.</small></section>
     <section className="card settings-card install-card"><CardHeading kicker="MAC & IPHONE" title="Install as an app" /><p>Install Anvi’s Dashboard for its own icon, app window and the best notification support.</p><div className="install-step"><span>iPhone</span><div><strong>Safari → Share → Add to Home Screen</strong><small>Turn on “Open as Web App”, open it from the new icon, then enable notifications here.</small></div></div><div className="install-step"><span>Mac</span><div><strong>Safari → File → Add to Dock</strong><small>Open the new Dock app and enable notifications from its Settings page.</small></div></div><div className="widget-note"><strong>About Apple widgets</strong><p>A true Home Screen, Lock Screen or Mac desktop widget requires a native WidgetKit app. The installed web app is the closest web-only option.</p></div></section>
     <section className="card settings-card"><CardHeading kicker="PORTABLE BACKUP" title="Export or import everything" /><p>Keep a human-readable JSON backup too. Importing replaces the current dashboard and then syncs it.</p><div className="backup-actions"><button className="button secondary" onClick={exportJson}>Export JSON</button><label className="button secondary">Import JSON<input hidden type="file" accept="application/json" onChange={importJson} /></label></div><details><summary>Edit raw data</summary><textarea value={JSON.stringify(data, null, 2)} onChange={e => { try { update(() => mergeData(JSON.parse(e.target.value))); } catch {} }} /></details></section>
   </div></>;
@@ -519,11 +592,12 @@ function SettingsView({ data, update, notifications, toggleNotifications, sendTe
 
 function CardHeading({ kicker, title, action, onAction }: { kicker: string; title: string; action?: string; onAction?: () => void }) { return <div className="card-heading"><div><small>{kicker}</small><h2>{title}</h2></div>{action && <button onClick={onAction}>{action}</button>}</div>; }
 function PageTitle({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) { return <header className="page-title"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{copy}</p></header>; }
-function TaskGroup({ title, subtitle, color, todos, nested, hideHeading, toggleTodo, removeTodo, setPriority }: { title: string; subtitle?: string; color: string; todos: Todo[]; nested?: boolean; hideHeading?: boolean; toggleTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
+function TaskGroup({ title, subtitle, color, todos, nested, hideHeading, toggleTodo, editTodo, removeTodo, setPriority }: { title: string; subtitle?: string; color: string; todos: Todo[]; nested?: boolean; hideHeading?: boolean; toggleTodo: (id: string) => void; editTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
   const today = toDateInput(new Date());
-  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}{t.reminder && <small className="due-chip reminder-chip">Remind {formatReminder(t.reminder)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><button className="delete" onClick={() => removeTodo(t.id)}>×</button></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
+  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}{t.reminder && <small className="due-chip reminder-chip">Remind {formatReminder(t.reminder)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><div className="todo-actions"><button className="row-edit" onClick={() => editTodo(t.id)} aria-label={`Edit ${t.text}`}>Edit</button><button className="delete" onClick={() => removeTodo(t.id)} aria-label={`Delete ${t.text}`}>×</button></div></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
 }
 function addCountdown(update: (f: (d: AppData) => AppData) => void) { const title = prompt("Countdown name"); if (!title) return; const date = prompt("Date and time (example: 2026-10-15 09:00)"); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: [...d.countdowns, { id: uid(), title, date: new Date(date).toISOString(), color: swatches[d.countdowns.length % swatches.length] }] })); }
+function editCountdown(update: (f: (d: AppData) => AppData) => void, countdown: Countdown) { const title = prompt("Countdown name", countdown.title); if (!title?.trim()) return; const current = toDateTimeInput(new Date(countdown.date)).replace("T", " "); const date = prompt("Date and time", current); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: d.countdowns.map(item => item.id === countdown.id ? { ...item, title: title.trim(), date: new Date(date).toISOString() } : item) })); }
 function addGoal(update: (f: (d: AppData) => AppData) => void, key: keyof AppData["goals"]) { const text = prompt(`New goal for ${horizons[key]}`); if (text?.trim()) update(d => ({ ...d, goals: { ...d.goals, [key]: [...d.goals[key], { id: uid(), text: text.trim(), done: false }] } })); }
 function addBookmark(update: (f: (d: AppData) => AppData) => void) { const title = prompt("Bookmark title"); if (!title) return; const url = prompt("Web address"); if (!url) return; update(d => ({ ...d, bookmarks: [...d.bookmarks, { id: uid(), title, url: normaliseUrl(url) }] })); }
 function addImageUrl(update: (f: (d: AppData) => AppData) => void, target: "visionImages" | "dashboardImages") { const url = prompt("Paste an image URL"); if (!url) return; const caption = prompt("Short caption") || "Inspiration"; update(d => ({ ...d, [target]: [...d[target], { id: uid(), url, caption }] })); }
@@ -539,7 +613,10 @@ function withinDays(iso: string, days: number) { return new Date(iso).getTime() 
 function rangeTotal(sessions: StudySession[], fromDays: number, toDays: number) { const n = Date.now(); return sessions.filter(s => { const age = (n - new Date(s.startedAt).getTime()) / 86400000; return age >= fromDays && age < toDays; }).reduce((a, s) => a + s.durationSeconds, 0); }
 function toDateInput(date: Date) { const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10); }
 function toTimeInput(date: Date) { return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; }
+function toDateTimeInput(date: Date) { return `${toDateInput(date)}T${toTimeInput(date)}`; }
 function localDayKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 function formatDueDate(value: string) { const date = new Date(`${value}T12:00:00`); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-AU", { day: "numeric", month: "short" }); }
 function formatReminder(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); }
+function formatMeetingTime(meeting: Meeting) { const start = new Date(meeting.startsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }); const end = meeting.endsAt ? new Date(meeting.endsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }) : ""; return end ? `${start}–${end}` : start; }
+function formatReminderLead(minutes: number) { if (minutes === 0) return "at start"; if (minutes === 1440) return "1 day before"; if (minutes >= 60) return `${minutes / 60}h before`; return `${minutes} min before`; }
 function lastSevenDays() { return Array.from({ length: 7 }, (_, index) => { const date = new Date(); date.setHours(12, 0, 0, 0); date.setDate(date.getDate() - (6 - index)); return { key: localDayKey(date), label: date.toLocaleDateString("en-AU", { weekday: "short" }).slice(0, 2) }; }); }
