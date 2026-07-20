@@ -9,10 +9,13 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 - Seven-day study chart, subject breakdown and week-over-week comparison
 - Overall todos grouped by subject, including required Maths exercises
 - Editable todo completion dates, a dedicated today list and a monthly due-date calendar
+- Clickable calendar days with a full agenda of meetings, study sessions and due to-dos
 - Upcoming meeting planner with editable dates, start/end times, details and per-meeting alert timing
 - Installable web app for iPhone and Mac with native-style notification support
 - Timed todo reminders, flexible meeting alerts and a configurable morning summary
 - Goals by time horizon, chronologically ordered countdowns, bookmarks, notes and square bulk-upload image boards
+- Subject-specific resource links and notebooks, plus a dedicated editable Ideas page
+- Computer-uploaded home covers and an optional Spotify track, album or playlist player
 - Automatic Supabase sync for cross-device data and image storage
 - JSON export/import backup
 
