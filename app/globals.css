@@ -73,7 +73,9 @@ img { display: block; max-width: 100%; }
 .hero-stats { display: flex; gap: 26px; padding: 16px 18px; border: 1px solid rgba(255,255,255,.25); border-radius: 13px; background: rgba(20,24,32,.28); backdrop-filter: blur(12px); }
 .hero-stats span { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
 .hero-stats b { display: block; font: 600 25px var(--serif); text-transform: none; letter-spacing: -.03em; }
-.day-plan { margin-top: 22px; padding: 23px 26px; background: linear-gradient(120deg, rgba(255,255,255,.94), rgba(239,235,250,.78)); }
+.focus-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; margin-top: 22px; align-items: stretch; }
+.focus-row > .card { min-width: 0; }
+.day-plan { padding: 23px 26px; background: linear-gradient(120deg, rgba(255,255,255,.94), rgba(239,235,250,.78)); }
 .day-plan > p { margin: 13px 0 5px; color: var(--muted); font-family: var(--serif); font-style: italic; }
 .day-plan-row { min-height: 48px; display: grid; grid-template-columns: 22px 6px minmax(0, 1fr) auto; gap: 10px; align-items: center; border-bottom: 1px solid #e7e3ee; }
 .day-plan-row > i { width: 5px; height: 28px; border-radius: 10px; }
@@ -138,11 +140,12 @@ img { display: block; max-width: 100%; }
 .spotify-connect strong { display: block; margin-top: 2px; font: 700 16px/1.25 var(--sans); }
 .spotify-connect p { margin: 7px 0 14px; color: var(--muted); font: 13px/1.45 var(--sans); }
 .spotify-button { background: #173f24; color: #fff; }
-.spotify-now { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 15px; align-items: center; margin-top: 16px; color: inherit; text-decoration: none; }
-.spotify-now > img { width: 92px; height: 92px; border-radius: 12px; object-fit: cover; box-shadow: 0 8px 22px rgba(25, 52, 33, .16); }
+.focus-row .spotify-card { padding: 23px 26px; }
+.spotify-now { display: grid; grid-template-columns: minmax(160px, .82fr) minmax(0, 1fr); gap: clamp(18px, 2vw, 30px); align-items: center; margin-top: 19px; color: inherit; text-decoration: none; }
+.spotify-now > img { width: 100%; aspect-ratio: 1; border-radius: 15px; object-fit: cover; box-shadow: 0 14px 34px rgba(25, 52, 33, .2); }
 .spotify-track { min-width: 0; }
 .spotify-track > span { color: #397448; font: 800 9px/1 var(--sans); letter-spacing: .14em; }
-.spotify-track strong { display: block; overflow: hidden; margin-top: 7px; text-overflow: ellipsis; white-space: nowrap; font: 700 16px/1.2 var(--sans); }
+.spotify-track strong { display: block; overflow: hidden; margin-top: 9px; text-overflow: ellipsis; font: 700 clamp(20px, 2.2vw, 32px)/1.05 var(--serif); letter-spacing: -.035em; }
 .spotify-track p { overflow: hidden; margin: 5px 0 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .spotify-progress { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(44, 75, 53, .13); }
 .spotify-progress i { display: block; height: 100%; border-radius: inherit; background: #438557; }
@@ -443,6 +446,7 @@ img { display: block; max-width: 100%; }
   .sidebar { padding-inline: 12px; }
   .page-wrap { padding-inline: 25px; }
   .dashboard-grid, .planner-grid, .subject-grid, .resource-top, .study-grid, .analytics-grid { grid-template-columns: 1fr; }
+  .focus-row { grid-template-columns: 1fr; }
   .dashboard-side { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .quick-note { grid-column: 1 / -1; }
   .study-grid { max-width: 850px; }
@@ -474,6 +478,10 @@ img { display: block; max-width: 100%; }
   .day-plan-row { grid-template-columns: 22px 5px minmax(0, 1fr); padding: 7px 0; }
   .day-plan-row .row-edit { grid-column: 3; justify-self: start; }
   .dashboard-grid { margin-top: 15px; }
+  .focus-row { gap: 15px; margin-top: 15px; }
+  .focus-row .spotify-card { padding: 20px 16px; }
+  .spotify-now { grid-template-columns: minmax(135px, 42%) minmax(0, 1fr); gap: 16px; }
+  .spotify-track strong { font-size: clamp(20px, 7vw, 30px); }
   .dashboard-side { grid-template-columns: 1fr; }
   .quick-note { grid-column: auto; }
   .task-card { padding: 20px 16px; }
@@ -549,6 +557,8 @@ img { display: block; max-width: 100%; }
   .hero { padding-inline: 18px; }
   .hero h1 { font-size: 41px; }
   .hero-stats { gap: 13px; padding-inline: 13px; }
+  .spotify-now { grid-template-columns: 1fr; }
+  .spotify-now > img { max-width: 100%; }
   .task-summary { grid-template-columns: 1fr auto; }
   .task-summary > div { grid-column: 1 / -1; grid-row: 2; }
   .card-heading { align-items: flex-start; flex-wrap: wrap; }

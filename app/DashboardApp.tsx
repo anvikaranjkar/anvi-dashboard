@@ -92,6 +92,7 @@ const STORAGE_KEY = "anvis-dashboard-data";
 const LEGACY_STORAGE_KEY = "daydream-desk-data";
 const NOTIFICATION_LOG_KEY = "anvis-dashboard-notification-log";
 const MORNING_SENT_KEY = "anvis-dashboard-morning-summary";
+const NOTIFICATIONS_ENABLED_KEY = "anvis-dashboard-notifications-enabled";
 const SPOTIFY_CLIENT_ID = "8d00c73eed1441b6ac0c8c43ecaadfec";
 const SPOTIFY_TOKEN_KEY = "anvis-dashboard-spotify-token";
 const SPOTIFY_VERIFIER_KEY = "anvis-dashboard-spotify-verifier";
@@ -125,7 +126,8 @@ export default function DashboardApp() {
     const cached = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
     let initial = starter;
     if (cached) { try { initial = mergeData(JSON.parse(cached)); setData(initial); } catch {} }
-    setNotifications("Notification" in window && Notification.permission === "granted");
+    const notificationsEnabled = localStorage.getItem(NOTIFICATIONS_ENABLED_KEY) !== "false";
+    setNotifications("Notification" in window && Notification.permission === "granted" && notificationsEnabled);
     if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js");
     setHydrated(true);
     void loadCloud(initial);
@@ -249,8 +251,15 @@ export default function DashboardApp() {
   }
   async function toggleNotifications() {
     if (!("Notification" in window)) return showToast("On iPhone, add the dashboard to your Home Screen first");
-    if (!notifications) { const p = await Notification.requestPermission(); setNotifications(p === "granted"); if (p === "granted") void showNativeNotification("Notifications are on", "Reminders and your morning summary are ready.", "notifications-enabled"); showToast(p === "granted" ? "Notifications are on" : "Notifications stayed off"); }
-    else { setNotifications(false); showToast("Notifications are off"); }
+    if (!notifications) {
+      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      const enabled = permission === "granted";
+      setNotifications(enabled); localStorage.setItem(NOTIFICATIONS_ENABLED_KEY, String(enabled));
+      if (enabled) void showNativeNotification("Notifications are on", "Reminders and your morning summary are ready.", "notifications-enabled");
+      showToast(enabled ? "Notifications are on" : permission === "denied" ? "Notifications are blocked in browser settings" : "Notifications stayed off");
+    } else {
+      setNotifications(false); localStorage.setItem(NOTIFICATIONS_ENABLED_KEY, "false"); showToast("Notifications are off");
+    }
   }
   function sendTestNotification() {
     if (!notifications) return showToast("Enable notifications first");
@@ -377,12 +386,13 @@ function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTod
   ].filter(item => !item.todo.done && item.todo.dueDate === today);
   return <>
     <section className="hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(24,31,44,.82), rgba(24,31,44,.2)), url(${data.profile.heroImage})` }}><label className="hero-upload">↥ Change cover<input hidden type="file" accept="image/*" onChange={event => uploadImages(event, "heroImage")} /></label><div><span className="eyebrow">{date}</span><h1>Hi {data.profile.name},<br /><em>make today count.</em></h1><p>{data.profile.quote}</p></div><div className="hero-stats"><span><b>{data.studySessions.filter(s => isToday(s.startedAt)).length}</b> sessions today</span><span><b>{formatDuration(weekSeconds)}</b> this week</span></div></section>
-    <section className="card day-plan"><CardHeading kicker="TODAY" title="What to do for the day" /><p>{todayItems.length ? `${todayItems.length} ${todayItems.length === 1 ? "thing" : "things"} due today. Finish one, and it disappears from this list.` : "Nothing due today — your day is clear."}</p>{todayItems.map(item => <div className="day-plan-row" key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)} aria-label={`Complete ${item.todo.text}`} /><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)} aria-label={`Edit ${item.todo.text}`}>Edit</button></div>)}</section>
+    <div className="focus-row">
+      <section className="card day-plan"><CardHeading kicker="TODAY" title="What to do for the day" /><p>{todayItems.length ? `${todayItems.length} ${todayItems.length === 1 ? "thing" : "things"} due today. Finish one, and it disappears from this list.` : "Nothing due today — your day is clear."}</p>{todayItems.map(item => <div className="day-plan-row" key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)} aria-label={`Complete ${item.todo.text}`} /><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)} aria-label={`Edit ${item.todo.text}`}>Edit</button></div>)}</section>
+      <SpotifyNowPlaying />
+    </div>
     <div className="dashboard-grid">
       <section className="card task-card"><CardHeading kicker="THE BIG PICTURE" title="Everything to do" action="＋ Add personal" onAction={() => addTodo()} /><div className="task-summary"><span><b>{countOpen(data)}</b> still open</span><div><i style={{ width: `${completion(data)}%` }} /></div><small>{completion(data)}% complete</small></div><TaskGroup title="Personal" color="#f6cf9e" todos={data.overallTodos} {...{ toggleTodo, editTodo, removeTodo, setPriority }} />{data.subjects.map(s => <div key={s.id}><TaskGroup title={s.name} color={s.color} todos={s.todos} {...{ toggleTodo, editTodo, removeTodo, setPriority }} /><button className="inline-add" onClick={() => addTodo(s.id)}>＋ Add {s.name} task</button>{s.exercises && <TaskGroup title="Required exercises / chapters" subtitle="Maths" color="#87b3f8" todos={s.exercises} nested {...{ toggleTodo, editTodo, removeTodo, setPriority }} />}{s.exercises && <button className="inline-add nested-add" onClick={() => addTodo(s.id, true)}>＋ Add required exercise</button>}</div>)}</section>
       <aside className="dashboard-side"><section className="card today-card"><CardHeading kicker="FOCUS" title="This week" action="View goals →" onAction={() => setTab("goals")} />{data.goals.week.map(g => <label className="goal-line" key={g.id}><input type="checkbox" checked={g.done} onChange={() => update(d => ({ ...d, goals: { ...d.goals, week: d.goals.week.map(x => x.id === g.id ? { ...x, done: !x.done } : x) } }))} /><span>{g.text}</span></label>)}</section>
-      <section className="card photo-card"><CardHeading kicker="PINBOARD" title="A little inspiration" />{data.dashboardImages[0] ? <div className="dashboard-photo"><img src={data.dashboardImages[0].url} alt={data.dashboardImages[0].caption} /><span>{data.dashboardImages[0].caption}</span></div> : <div className="empty-image">Add a mood image</div>}<div className="photo-actions"><label className="button secondary">Upload images<input hidden multiple type="file" accept="image/*" onChange={e => uploadImages(e, "dashboardImages")} /></label><button className="text-button" onClick={() => addImageUrl(update, "dashboardImages")}>Paste URL</button></div></section>
-      <SpotifyNowPlaying />
       <section className="card quick-note"><CardHeading kicker="SCRATCHPAD" title="Quick note" /><textarea value={data.notes} onChange={e => update(d => ({ ...d, notes: e.target.value }))} aria-label="Quick notes" /><small>Saved automatically</small></section></aside>
     </div>
     <PlannerHub data={data} update={update} toggleTodo={toggleTodo} editTodo={editTodo} />
