@@ -105,6 +105,7 @@ img { display: block; max-width: 100%; }
 .task-group-title > b { min-width: 23px; height: 23px; padding: 0 6px; display: grid; place-items: center; border-radius: 20px; background: #eeede8; font-size: 10px; }
 .todo-row { min-height: 42px; display: grid; grid-template-columns: 25px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 7px 5px; border-bottom: 1px solid #ecebe6; }
 .todo-copy { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; }
+.todo-note { width: 100%; color: var(--muted); font: italic 11px/1.35 var(--serif); }
 .todo-text { min-width: 0; overflow-wrap: anywhere; }
 .todo-row.done .todo-text { color: #999; text-decoration: line-through; }
 .due-chip { flex: 0 0 auto; padding: 3px 7px; border-radius: 20px; background: #e8eef8; color: #50658e; font-size: 8px; font-weight: 750; letter-spacing: .02em; }
@@ -183,6 +184,8 @@ img { display: block; max-width: 100%; }
 .selected-day-heading small { display: block; color: #756899; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
 .selected-day-heading h3 { margin: 3px 0 0; font: 600 22px var(--serif); }
 .selected-day-heading > span { padding: 5px 8px; border-radius: 20px; background: #e5ddf6; color: #665888; font-size: 8px; font-weight: 750; }
+.selected-day-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.selected-day-actions button { padding: 6px 8px; border: 1px solid #8b7db3; border-radius: 7px; background: white; color: #635487; font-size: 8px; font-weight: 750; }
 .day-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; padding-top: 14px; }
 .day-detail-grid h4 { margin: 0 0 7px; color: #65616f; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
 .day-timeline-row { min-height: 48px; display: grid; grid-template-columns: 69px 7px minmax(0, 1fr) auto; gap: 8px; align-items: center; border-top: 1px solid #e6e1ef; }
@@ -218,6 +221,9 @@ img { display: block; max-width: 100%; }
 .meeting-form label { display: grid; gap: 5px; margin-bottom: 9px; color: #555b66; font-size: 9px; font-weight: 650; }
 .meeting-form label small { display: inline; margin-left: 3px; color: var(--muted); font-weight: 400; }
 .meeting-form input, .meeting-form select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #d2cedd; border-radius: 8px; outline-color: var(--lavender); background: white; font-size: 11px; }
+.event-options { margin: 2px 0 10px; display: flex !important; flex-wrap: wrap; gap: 12px; }
+.meeting-form .event-options label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 9px; }
+.meeting-form .event-options input { width: auto; padding: 0; }
 .meeting-form-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .form-error { margin: 0 0 9px; color: #9b384d; font-size: 9px; }
 .meeting-list { margin-top: 8px; }
@@ -438,6 +444,7 @@ img { display: block; max-width: 100%; }
 .todo-composer label { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 14px; color: #555b66; font-size: 10px; font-weight: 650; }
 .todo-composer label small { color: var(--muted); font-weight: 400; }
 .todo-composer input { grid-column: 1 / -1; width: 100%; padding: 12px; border: 1px solid #d5d4ce; border-radius: 9px; outline-color: var(--blue); background: #faf9f6; }
+.todo-composer textarea { grid-column: 1 / -1; width: 100%; min-height: 78px; padding: 12px; resize: vertical; border: 1px solid #d5d4ce; border-radius: 9px; outline-color: var(--blue); background: #faf9f6; font: 13px/1.45 var(--sans); }
 .modal-close { position: absolute; right: 12px; top: 11px; width: 30px; height: 30px; border: 0; border-radius: 50%; background: #f0efea; color: #777; font-size: 19px; }
 .composer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 
@@ -503,6 +510,7 @@ img { display: block; max-width: 100%; }
   .calendar-cell > div > small { width: 100%; font-size: 6px; }
   .selected-day { padding: 14px 11px; }
   .selected-day-heading { align-items: flex-start; }
+  .selected-day-actions { justify-content: flex-start; }
   .selected-day-heading h3 { font-size: 19px; }
   .day-detail-grid { grid-template-columns: 1fr; gap: 15px; }
   .day-timeline-row { grid-template-columns: 64px 6px minmax(0, 1fr) auto; }

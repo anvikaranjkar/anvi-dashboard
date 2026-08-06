@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 
 type Tab = "dashboard" | "subjects" | "goals" | "ideas" | "resources" | "study" | "settings";
 type Priority = "low" | "medium" | "high";
-type Todo = { id: string; text: string; done: boolean; priority: Priority; reminder?: string; dueDate?: string };
+type Todo = { id: string; text: string; done: boolean; priority: Priority; reminder?: string; dueDate?: string; note?: string };
 type Subject = { id: string; name: string; color: string; goodAt: string; improve: string; notes?: string; resources?: Bookmark[]; todos: Todo[]; exercises?: Todo[] };
 type Goal = { id: string; text: string; done: boolean };
 type Countdown = { id: string; title: string; date: string; color: string };
@@ -12,7 +12,7 @@ type StudySession = { id: string; subject: string; startedAt: string; durationSe
 type ImageItem = { id: string; url: string; caption: string };
 type Bookmark = { id: string; title: string; url: string };
 type Idea = { id: string; title: string; body: string; createdAt: string; color: string; pinned?: boolean };
-type Meeting = { id: string; title: string; startsAt: string; endsAt?: string; details?: string; reminderMinutes?: number };
+type Meeting = { id: string; title: string; startsAt: string; endsAt?: string; details?: string; reminderMinutes?: number; allDay?: boolean; countdownId?: string };
 type TodoComposerState = { subjectId?: string; exercise: boolean; todoId?: string };
 type AppData = {
   profile: { name: string; heroImage: string; quote: string; spotifyUrl: string };
@@ -97,6 +97,7 @@ const SPOTIFY_CLIENT_ID = "8d00c73eed1441b6ac0c8c43ecaadfec";
 const SPOTIFY_TOKEN_KEY = "anvis-dashboard-spotify-token";
 const SPOTIFY_VERIFIER_KEY = "anvis-dashboard-spotify-verifier";
 const SPOTIFY_STATE_KEY = "anvis-dashboard-spotify-state";
+const SPOTIFY_LAST_PLAYED_KEY = "anvis-dashboard-spotify-last-played";
 const SUPABASE_URL = "https://iiwjnqfbhzfzwzvccapc.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlpd2pucWZiaHpmend6dmNjYXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4Njk2NTEsImV4cCI6MjA5NDQ0NTY1MX0.PX4XXr9fxtZHqN-hq5iwvkOV3-oYULXi459Zcis6h9Y";
 
@@ -277,17 +278,17 @@ export default function DashboardApp() {
       if ((subject.exercises || []).some(todo => todo.id === id)) return setTodoComposer({ subjectId: subject.id, exercise: true, todoId: id });
     }
   }
-  function saveTodo(text: string, dueDate?: string, reminder?: string) {
+  function saveTodo(text: string, dueDate?: string, reminder?: string, note?: string) {
     if (!todoComposer) return;
     const { subjectId, exercise, todoId } = todoComposer;
     if (todoId) {
-      const replace = (items: Todo[]) => items.map(todo => todo.id === todoId ? { ...todo, text: text.trim(), dueDate, reminder } : todo);
+      const replace = (items: Todo[]) => items.map(todo => todo.id === todoId ? { ...todo, text: text.trim(), dueDate, reminder, note: note?.trim() || undefined } : todo);
       update(d => ({ ...d, overallTodos: replace(d.overallTodos), subjects: d.subjects.map(subject => ({ ...subject, todos: replace(subject.todos), exercises: subject.exercises ? replace(subject.exercises) : undefined })) }));
       setTodoComposer(null);
       showToast("To-do updated");
       return;
     }
-    const todo: Todo = { id: uid(), text: text.trim(), done: false, priority: "medium", dueDate, reminder };
+    const todo: Todo = { id: uid(), text: text.trim(), done: false, priority: "medium", dueDate, reminder, note: note?.trim() || undefined };
     update(d => subjectId ? ({ ...d, subjects: d.subjects.map(s => s.id === subjectId ? { ...s, [exercise ? "exercises" : "todos"]: [...(exercise ? s.exercises || [] : s.todos), todo] } : s) }) : ({ ...d, overallTodos: [...d.overallTodos, todo] }));
     setTodoComposer(null);
   }
@@ -386,6 +387,7 @@ function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTod
   ].filter(item => !item.todo.done && item.todo.dueDate === today);
   return <>
     <section className="hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(24,31,44,.82), rgba(24,31,44,.2)), url(${data.profile.heroImage})` }}><label className="hero-upload">↥ Change cover<input hidden type="file" accept="image/*" onChange={event => uploadImages(event, "heroImage")} /></label><div><span className="eyebrow">{date}</span><h1>Hi {data.profile.name},<br /><em>make today count.</em></h1><p>{data.profile.quote}</p></div><div className="hero-stats"><span><b>{data.studySessions.filter(s => isToday(s.startedAt)).length}</b> sessions today</span><span><b>{formatDuration(weekSeconds)}</b> this week</span></div></section>
+    <PlannerHub data={data} update={update} toggleTodo={toggleTodo} editTodo={editTodo} />
     <div className="focus-row">
       <section className="card day-plan"><CardHeading kicker="TODAY" title="What to do for the day" /><p>{todayItems.length ? `${todayItems.length} ${todayItems.length === 1 ? "thing" : "things"} due today. Finish one, and it disappears from this list.` : "Nothing due today — your day is clear."}</p>{todayItems.map(item => <div className="day-plan-row" key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)} aria-label={`Complete ${item.todo.text}`} /><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)} aria-label={`Edit ${item.todo.text}`}>Edit</button></div>)}</section>
       <SpotifyNowPlaying />
@@ -395,7 +397,6 @@ function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTod
       <aside className="dashboard-side"><section className="card today-card"><CardHeading kicker="FOCUS" title="This week" action="View goals →" onAction={() => setTab("goals")} />{data.goals.week.map(g => <label className="goal-line" key={g.id}><input type="checkbox" checked={g.done} onChange={() => update(d => ({ ...d, goals: { ...d.goals, week: d.goals.week.map(x => x.id === g.id ? { ...x, done: !x.done } : x) } }))} /><span>{g.text}</span></label>)}</section>
       <section className="card quick-note"><CardHeading kicker="SCRATCHPAD" title="Quick note" /><textarea value={data.notes} onChange={e => update(d => ({ ...d, notes: e.target.value }))} aria-label="Quick notes" /><small>Saved automatically</small></section></aside>
     </div>
-    <PlannerHub data={data} update={update} toggleTodo={toggleTodo} editTodo={editTodo} />
   </>;
 }
 
@@ -405,11 +406,13 @@ type SpotifyPlayback = { is_playing: boolean; progress_ms: number; item?: { id: 
 function SpotifyNowPlaying() {
   const [token, setToken] = useState<SpotifyToken | null>(null);
   const [playback, setPlayback] = useState<SpotifyPlayback | null>(null);
+  const [lastPlayback, setLastPlayback] = useState<SpotifyPlayback | null>(null);
   const [status, setStatus] = useState<"loading" | "disconnected" | "ready" | "idle" | "error">("loading");
 
   useEffect(() => {
     let stored: SpotifyToken | null = null;
     try { stored = JSON.parse(localStorage.getItem(SPOTIFY_TOKEN_KEY) || "null"); } catch {}
+    try { setLastPlayback(JSON.parse(localStorage.getItem(SPOTIFY_LAST_PLAYED_KEY) || "null")); } catch {}
     const params = new URLSearchParams(window.location.search);
     const code = params.get("spotify_code");
     const returnedState = params.get("spotify_state");
@@ -440,7 +443,9 @@ function SpotifyNowPlaying() {
         if (response.status === 204) { setPlayback(null); setStatus("idle"); return; }
         if (!response.ok) throw new Error("Spotify playback unavailable");
         const current = await response.json() as SpotifyPlayback;
-        setPlayback(current); setStatus(current.item ? "ready" : "idle");
+        setPlayback(current);
+        if (current.item) { setLastPlayback(current); localStorage.setItem(SPOTIFY_LAST_PLAYED_KEY, JSON.stringify(current)); }
+        setStatus(current.item ? "ready" : "idle");
       } catch { if (!cancelled) setStatus("error"); }
     }
     void refreshPlayback();
@@ -449,20 +454,21 @@ function SpotifyNowPlaying() {
   }, [token?.access_token]);
 
   function disconnect() {
-    localStorage.removeItem(SPOTIFY_TOKEN_KEY); setToken(null); setPlayback(null); setStatus("disconnected");
+    localStorage.removeItem(SPOTIFY_TOKEN_KEY); localStorage.removeItem(SPOTIFY_LAST_PLAYED_KEY); setToken(null); setPlayback(null); setLastPlayback(null); setStatus("disconnected");
   }
 
-  const track = playback?.item;
-  const progress = track?.duration_ms ? Math.min(100, Math.max(0, (playback?.progress_ms || 0) / track.duration_ms * 100)) : 0;
+  const track = playback?.item || lastPlayback?.item;
+  const isLive = status === "ready" && Boolean(playback?.item);
+  const progress = isLive && track?.duration_ms ? Math.min(100, Math.max(0, (playback?.progress_ms || 0) / track.duration_ms * 100)) : 0;
   return <section className="card spotify-card">
     <CardHeading kicker="LIVE FROM SPOTIFY" title="Now playing" action={token ? "Disconnect" : undefined} onAction={disconnect} />
     {status === "loading" && <div className="spotify-empty"><span>♫</span><p>Checking your Spotify connection…</p></div>}
     {status === "disconnected" && <div className="spotify-connect"><span>♫</span><div><strong>See what you’re playing, live.</strong><p>Connect once, then this card updates automatically while your dashboard is open.</p><button className="button spotify-button" onClick={() => void connectSpotify()}>Connect Spotify</button></div></div>}
     {status === "error" && <div className="spotify-connect"><span>!</span><div><strong>Spotify needs reconnecting.</strong><p>Your session may have expired or Spotify could not read playback.</p><button className="button spotify-button" onClick={() => void connectSpotify()}>Reconnect Spotify</button></div></div>}
-    {status === "idle" && <div className="spotify-empty"><span>Ⅱ</span><p>Nothing is playing right now. Start Spotify on any device and this card will update.</p></div>}
-    {status === "ready" && track && <a className="spotify-now" href={track.external_urls?.spotify} target="_blank" rel="noreferrer">
+    {status === "idle" && !track && <div className="spotify-empty"><span>Ⅱ</span><p>Nothing is playing right now. Start Spotify on any device and this card will update.</p></div>}
+    {(status === "ready" || status === "idle") && track && <a className="spotify-now" href={track.external_urls?.spotify} target="_blank" rel="noreferrer">
       {track.album?.images?.[0]?.url ? <img src={track.album.images[0].url} alt="" /> : <span className="spotify-art">♫</span>}
-      <div className="spotify-track"><span>{playback?.is_playing ? "PLAYING NOW" : "PAUSED"}</span><strong>{track.name}</strong><p>{track.artists?.map(artist => artist.name).join(", ") || track.album?.name}</p><div className="spotify-progress"><i style={{ width: `${progress}%` }} /></div></div>
+      <div className="spotify-track"><span>{isLive && playback?.is_playing ? "PLAYING NOW" : isLive ? "PAUSED" : "LAST PLAYED"}</span><strong>{track.name}</strong><p>{track.artists?.map(artist => artist.name).join(", ") || track.album?.name}</p>{isLive && <div className="spotify-progress"><i style={{ width: `${progress}%` }} /></div>}</div>
     </a>}
   </section>;
 }
@@ -638,18 +644,19 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, note, se
   </>;
 }
 
-function TodoComposer({ target, subjects, initial, onSave, onClose }: { target: TodoComposerState; subjects: Subject[]; initial?: Todo; onSave: (text: string, dueDate?: string, reminder?: string) => void; onClose: () => void }) {
+function TodoComposer({ target, subjects, initial, onSave, onClose }: { target: TodoComposerState; subjects: Subject[]; initial?: Todo; onSave: (text: string, dueDate?: string, reminder?: string, note?: string) => void; onClose: () => void }) {
   const [text, setText] = useState(initial?.text || "");
   const [dueDate, setDueDate] = useState(initial?.dueDate || "");
   const [reminder, setReminder] = useState(initial?.reminder ? toDateTimeInput(new Date(initial.reminder)) : "");
+  const [note, setNote] = useState(initial?.note || "");
   const subject = subjects.find(s => s.id === target.subjectId);
   const title = initial ? "Edit to-do" : target.exercise ? "Add required exercise" : subject ? `Add ${subject.name} task` : "Add personal todo";
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!text.trim()) return;
-    onSave(text, dueDate || undefined, reminder ? new Date(reminder).toISOString() : undefined);
+    onSave(text, dueDate || undefined, reminder ? new Date(reminder).toISOString() : undefined, note);
   }
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">{initial ? "UPDATE TO-DO" : "NEW TO-DO"}</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><label>Remind me <small>optional</small><input type="datetime-local" value={reminder} onChange={event => setReminder(event.target.value)} /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">{initial ? "Save changes" : "Add to-do"}</button></div></form></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">{initial ? "UPDATE TO-DO" : "NEW TO-DO"}</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><label>Remind me <small>optional</small><input type="datetime-local" value={reminder} onChange={event => setReminder(event.target.value)} /></label><label>Notes <small>optional</small><textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Extra details, links or a reminder to yourself" /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">{initial ? "Save changes" : "Add to-do"}</button></div></form></div>;
 }
 
 function PlannerHub({ data, update, toggleTodo, editTodo }: { data: AppData; update: (f: (d: AppData) => AppData) => void; toggleTodo: (id: string) => void; editTodo: (id: string) => void }) {
@@ -662,6 +669,8 @@ function PlannerHub({ data, update, toggleTodo, editTodo }: { data: AppData; upd
   const [meetingEndTime, setMeetingEndTime] = useState("17:00");
   const [meetingDetails, setMeetingDetails] = useState("");
   const [meetingReminder, setMeetingReminder] = useState("15");
+  const [eventAllDay, setEventAllDay] = useState(false);
+  const [eventCountdown, setEventCountdown] = useState(false);
   const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null);
   const [meetingError, setMeetingError] = useState("");
   const todayKey = toDateInput(new Date());
@@ -688,44 +697,50 @@ function PlannerHub({ data, update, toggleTodo, editTodo }: { data: AppData; upd
 
   function changeMonth(offset: number) { setMonth(current => new Date(current.getFullYear(), current.getMonth() + offset, 1, 12)); }
   function resetMeetingForm() {
-    setMeetingTitle(""); setMeetingDetails(""); setMeetingReminder("15"); setEditingMeetingId(null); setMeetingError(""); setShowMeetingForm(false);
+    setMeetingTitle(""); setMeetingDetails(""); setMeetingReminder("15"); setEventAllDay(false); setEventCountdown(false); setEditingMeetingId(null); setMeetingError(""); setShowMeetingForm(false);
   }
-  function openNewMeeting() {
+  function openNewMeeting(date = selectedDay) {
     if (showMeetingForm && !editingMeetingId) return resetMeetingForm();
-    setEditingMeetingId(null); setMeetingTitle(""); setMeetingDetails(""); setMeetingDate(toDateInput(new Date())); setMeetingTime("16:00"); setMeetingEndTime("17:00"); setMeetingReminder("15"); setMeetingError(""); setShowMeetingForm(true);
+    setEditingMeetingId(null); setMeetingTitle(""); setMeetingDetails(""); setMeetingDate(date); setMeetingTime("16:00"); setMeetingEndTime("17:00"); setMeetingReminder("15"); setEventAllDay(false); setEventCountdown(false); setMeetingError(""); setShowMeetingForm(true);
   }
   function editMeeting(meeting: Meeting) {
     const startsAt = new Date(meeting.startsAt);
     const endsAt = meeting.endsAt ? new Date(meeting.endsAt) : new Date(startsAt.getTime() + 60 * 60 * 1000);
-    setEditingMeetingId(meeting.id); setMeetingTitle(meeting.title); setMeetingDate(toDateInput(startsAt)); setMeetingTime(toTimeInput(startsAt)); setMeetingEndTime(toTimeInput(endsAt)); setMeetingDetails(meeting.details || ""); setMeetingReminder(String(meeting.reminderMinutes ?? 15)); setMeetingError(""); setShowMeetingForm(true);
+    setEditingMeetingId(meeting.id); setMeetingTitle(meeting.title); setMeetingDate(toDateInput(startsAt)); setMeetingTime(toTimeInput(startsAt)); setMeetingEndTime(toTimeInput(endsAt)); setMeetingDetails(meeting.details || ""); setMeetingReminder(String(meeting.reminderMinutes ?? 15)); setEventAllDay(Boolean(meeting.allDay)); setEventCountdown(Boolean(meeting.countdownId)); setMeetingError(""); setShowMeetingForm(true);
   }
   function saveMeeting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const startsAt = new Date(`${meetingDate}T${meetingTime}`);
-    const endsAt = new Date(`${meetingDate}T${meetingEndTime}`);
+    const startsAt = new Date(`${meetingDate}T${eventAllDay ? "12:00" : meetingTime}`);
+    const endsAt = eventAllDay ? undefined : new Date(`${meetingDate}T${meetingEndTime}`);
     if (!meetingTitle.trim() || Number.isNaN(startsAt.getTime())) return;
-    if (Number.isNaN(endsAt.getTime()) || endsAt <= startsAt) { setMeetingError("End time needs to be after the start time."); return; }
-    const meeting: Meeting = { id: editingMeetingId || uid(), title: meetingTitle.trim(), startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), details: meetingDetails.trim() || undefined, reminderMinutes: Number(meetingReminder) };
-    update(d => ({ ...d, meetings: editingMeetingId ? d.meetings.map(item => item.id === editingMeetingId ? meeting : item) : [...d.meetings, meeting] }));
+    if (endsAt && (Number.isNaN(endsAt.getTime()) || endsAt <= startsAt)) { setMeetingError("End time needs to be after the start time."); return; }
+    const existing = editingMeetingId ? data.meetings.find(item => item.id === editingMeetingId) : undefined;
+    const countdownId = eventCountdown ? existing?.countdownId || uid() : undefined;
+    const meeting: Meeting = { id: editingMeetingId || uid(), title: meetingTitle.trim(), startsAt: startsAt.toISOString(), endsAt: endsAt?.toISOString(), details: meetingDetails.trim() || undefined, reminderMinutes: Number(meetingReminder), allDay: eventAllDay, countdownId };
+    update(d => {
+      const countdowns = existing?.countdownId ? d.countdowns.filter(item => item.id !== existing.countdownId) : d.countdowns;
+      const nextCountdowns = countdownId ? [...countdowns, { id: countdownId, title: meeting.title, date: meeting.startsAt, color: swatches[countdowns.length % swatches.length] }] : countdowns;
+      return { ...d, meetings: editingMeetingId ? d.meetings.map(item => item.id === editingMeetingId ? meeting : item) : [...d.meetings, meeting], countdowns: nextCountdowns };
+    });
     resetMeetingForm();
   }
 
   return <section className="planner-grid">
     <div className="card calendar-card">
-      <div className="planner-heading"><div><small>DUE DATES</small><h2>{month.toLocaleDateString("en-AU", { month: "long", year: "numeric" })}</h2></div><div className="calendar-nav"><button onClick={() => changeMonth(-1)} aria-label="Previous month">←</button><button onClick={() => { const today = new Date(); setMonth(new Date(today.getFullYear(), today.getMonth(), 1, 12)); setSelectedDay(todayKey); }}>Today</button><button onClick={() => changeMonth(1)} aria-label="Next month">→</button></div></div>
+      <div className="planner-heading"><div><small>CALENDAR</small><h2>{month.toLocaleDateString("en-AU", { month: "long", year: "numeric" })}</h2></div><div className="calendar-nav"><button onClick={() => changeMonth(-1)} aria-label="Previous month">←</button><button onClick={() => { const today = new Date(); setMonth(new Date(today.getFullYear(), today.getMonth(), 1, 12)); setSelectedDay(todayKey); }}>Today</button><button onClick={() => changeMonth(1)} aria-label="Next month">→</button></div></div>
       <div className="calendar-weekdays">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <span key={day}>{day}</span>)}</div>
       <div className="calendar-grid">{cells.map((day, index) => {
         if (!day) return <div className="calendar-cell blank" key={`blank-${index}`} />;
         const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
         const taskEvents = datedTodos.filter(item => !item.todo.done && item.todo.dueDate === key);
         const meetingEvents = data.meetings.filter(meeting => localDayKey(new Date(meeting.startsAt)) === key);
-        const events = [...taskEvents.map(item => ({ id: item.todo.id, label: `${item.source}: ${item.todo.text}`, color: item.color, type: "task" })), ...meetingEvents.map(meeting => ({ id: meeting.id, label: meeting.title, color: "#c7b8ee", type: "meeting" }))];
+        const events = [...taskEvents.map(item => ({ id: item.todo.id, label: `${item.source}: ${item.todo.text}`, color: item.color, type: "task" })), ...meetingEvents.map(meeting => ({ id: meeting.id, label: `${meeting.allDay ? "All day · " : ""}${meeting.title}`, color: "#c7b8ee", type: "meeting" }))];
         return <button type="button" className={`calendar-cell ${key === todayKey ? "today" : ""} ${key === selectedDay ? "selected" : ""}`} key={key} onClick={() => setSelectedDay(key)} aria-label={`Open ${new Date(`${key}T12:00:00`).toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}`}><b>{day}</b><div>{events.slice(0, 2).map(event => <span className={`calendar-event ${event.type}`} style={{ "--event": event.color } as React.CSSProperties} title={event.label} key={`${event.type}-${event.id}`}><i />{event.label}</span>)}{events.length > 2 && <small>+{events.length - 2} more</small>}</div></button>;
       })}</div>
-      <section className="selected-day"><div className="selected-day-heading"><div><small>DAY DETAILS</small><h3>{selectedDate.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</h3></div><span>{selectedTodos.length + selectedMeetings.length + selectedStudy.length} items</span></div><div className="day-detail-grid"><div><h4>Timings & meetings</h4>{selectedMeetings.map(meeting => <div className="day-timeline-row meeting" key={meeting.id}><time>{formatMeetingTime(meeting)}</time><i /><div><strong>{meeting.title}</strong>{meeting.details && <small>{meeting.details}</small>}</div><button onClick={() => editMeeting(meeting)}>Edit</button></div>)}{selectedStudy.map(session => <div className="day-timeline-row study" key={session.id}><time>{new Date(session.startedAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}</time><i /><div><strong>{session.subject} study</strong><small>{formatDuration(session.durationSeconds)}{session.note ? ` · ${session.note}` : ""}</small></div></div>)}{!selectedMeetings.length && !selectedStudy.length && <div className="day-empty">No timed plans or study sessions.</div>}</div><div><h4>To-dos</h4>{selectedTodos.map(item => <div className={`day-todo ${item.todo.done ? "done" : ""}`} key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)}>{item.todo.done ? "✓" : ""}</button><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}{item.todo.reminder ? ` · ${formatReminder(item.todo.reminder)}` : ""}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)}>Edit</button></div>)}{!selectedTodos.length && <div className="day-empty">No to-dos due on this day.</div>}</div></div></section>
+      <section className="selected-day"><div className="selected-day-heading"><div><small>DAY DETAILS</small><h3>{selectedDate.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</h3></div><div className="selected-day-actions"><span>{selectedTodos.length + selectedMeetings.length + selectedStudy.length} items</span><button onClick={() => openNewMeeting(selectedDay)}>＋ Add event</button></div></div><div className="day-detail-grid"><div><h4>Timings & events</h4>{selectedMeetings.map(meeting => <div className="day-timeline-row meeting" key={meeting.id}><time>{formatMeetingTime(meeting)}</time><i /><div><strong>{meeting.title}</strong>{meeting.details && <small>{meeting.details}</small>}</div><button onClick={() => editMeeting(meeting)}>Edit</button></div>)}{selectedStudy.map(session => <div className="day-timeline-row study" key={session.id}><time>{new Date(session.startedAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}</time><i /><div><strong>{session.subject} study</strong><small>{formatDuration(session.durationSeconds)}{session.note ? ` · ${session.note}` : ""}</small></div></div>)}{!selectedMeetings.length && !selectedStudy.length && <div className="day-empty">No events or study sessions.</div>}</div><div><h4>To-dos</h4>{selectedTodos.map(item => <div className={`day-todo ${item.todo.done ? "done" : ""}`} key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)}>{item.todo.done ? "✓" : ""}</button><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}{item.todo.note ? ` · ${item.todo.note}` : ""}{item.todo.reminder ? ` · ${formatReminder(item.todo.reminder)}` : ""}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)}>Edit</button></div>)}{!selectedTodos.length && <div className="day-empty">No to-dos due on this day.</div>}</div></div></section>
       <div className="due-agenda"><div className="agenda-title"><strong>What’s due next</strong><small>Tasks with completion dates</small></div>{dueAgenda.length ? dueAgenda.map(item => <div className="due-agenda-row" key={item.todo.id}><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><time className={(item.todo.dueDate || "") < todayKey ? "overdue" : ""}>{(item.todo.dueDate || "") < todayKey ? "Overdue · " : ""}{formatDueDate(item.todo.dueDate || "")}</time></div>) : <div className="empty-state">Add a completion date to a to-do and it will appear here.</div>}</div>
     </div>
-    <div className="card meetings-card"><CardHeading kicker="SCHEDULE" title="Upcoming meetings" action={showMeetingForm && !editingMeetingId ? "Close" : "＋ Add meeting"} onAction={openNewMeeting} />{showMeetingForm && <form className="meeting-form" onSubmit={saveMeeting}><span className="form-mode">{editingMeetingId ? "EDIT MEETING" : "NEW MEETING"}</span><label>Meeting<input autoFocus value={meetingTitle} onChange={event => setMeetingTitle(event.target.value)} placeholder="Meeting title" required /></label><div><label>Date<input type="date" value={meetingDate} onChange={event => setMeetingDate(event.target.value)} required /></label><label>Start time<input type="time" value={meetingTime} onChange={event => setMeetingTime(event.target.value)} required /></label><label>End time<input type="time" value={meetingEndTime} onChange={event => setMeetingEndTime(event.target.value)} required /></label><label>Alert me<select value={meetingReminder} onChange={event => setMeetingReminder(event.target.value)}>{[[0, "At start"], [5, "5 min before"], [10, "10 min before"], [15, "15 min before"], [30, "30 min before"], [60, "1 hour before"], [1440, "1 day before"]].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div><label>Details <small>optional</small><input value={meetingDetails} onChange={event => setMeetingDetails(event.target.value)} placeholder="Location, link or notes" /></label>{meetingError && <p className="form-error">{meetingError}</p>}<div className="meeting-form-actions"><button className="button secondary" type="button" onClick={resetMeetingForm}>Cancel</button><button className="button" type="submit">{editingMeetingId ? "Save changes" : "Save meeting"}</button></div></form>}<div className="meeting-list">{upcomingMeetings.length ? upcomingMeetings.map(meeting => <div className="meeting-row" key={meeting.id}><time><b>{new Date(meeting.startsAt).getDate()}</b><span>{new Date(meeting.startsAt).toLocaleDateString("en-AU", { month: "short" })}</span></time><div><strong>{meeting.title}</strong><small>{formatMeetingTime(meeting)}{meeting.details ? ` · ${meeting.details}` : ""}</small><span className="meeting-reminder">Alert {formatReminderLead(meeting.reminderMinutes ?? 15)}</span></div><div className="meeting-actions"><button onClick={() => editMeeting(meeting)}>Edit</button><button onClick={() => update(d => ({ ...d, meetings: d.meetings.filter(item => item.id !== meeting.id) }))}>Cancel</button></div></div>) : <div className="empty-state">No upcoming meetings yet.</div>}</div></div>
+    <div className="card meetings-card"><CardHeading kicker="SCHEDULE" title="Upcoming events" action={showMeetingForm && !editingMeetingId ? "Close" : "＋ Add event"} onAction={() => openNewMeeting(selectedDay)} />{showMeetingForm && <form className="meeting-form" onSubmit={saveMeeting}><span className="form-mode">{editingMeetingId ? "EDIT EVENT" : "NEW EVENT"}</span><label>Event<input autoFocus value={meetingTitle} onChange={event => setMeetingTitle(event.target.value)} placeholder="Event title" required /></label><div><label>Date<input type="date" value={meetingDate} onChange={event => setMeetingDate(event.target.value)} required /></label>{!eventAllDay && <><label>Start time<input type="time" value={meetingTime} onChange={event => setMeetingTime(event.target.value)} required /></label><label>End time<input type="time" value={meetingEndTime} onChange={event => setMeetingEndTime(event.target.value)} required /></label></>}<label>Alert me<select value={meetingReminder} onChange={event => setMeetingReminder(event.target.value)}>{[[0, "At start"], [5, "5 min before"], [10, "10 min before"], [15, "15 min before"], [30, "30 min before"], [60, "1 hour before"], [1440, "1 day before"]].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div><div className="event-options"><label><input type="checkbox" checked={eventAllDay} onChange={event => setEventAllDay(event.target.checked)} />All day</label><label><input type="checkbox" checked={eventCountdown} onChange={event => setEventCountdown(event.target.checked)} />Also add to countdowns</label></div><label>Details <small>optional</small><input value={meetingDetails} onChange={event => setMeetingDetails(event.target.value)} placeholder="Location, link or notes" /></label>{meetingError && <p className="form-error">{meetingError}</p>}<div className="meeting-form-actions"><button className="button secondary" type="button" onClick={resetMeetingForm}>Cancel</button><button className="button" type="submit">{editingMeetingId ? "Save changes" : "Save event"}</button></div></form>}<div className="meeting-list">{upcomingMeetings.length ? upcomingMeetings.map(meeting => <div className="meeting-row" key={meeting.id}><time><b>{new Date(meeting.startsAt).getDate()}</b><span>{new Date(meeting.startsAt).toLocaleDateString("en-AU", { month: "short" })}</span></time><div><strong>{meeting.title}</strong><small>{formatMeetingTime(meeting)}{meeting.details ? ` · ${meeting.details}` : ""}</small><span className="meeting-reminder">{meeting.countdownId ? "In countdowns · " : ""}Alert {formatReminderLead(meeting.reminderMinutes ?? 15)}</span></div><div className="meeting-actions"><button onClick={() => editMeeting(meeting)}>Edit</button><button onClick={() => update(d => ({ ...d, meetings: d.meetings.filter(item => item.id !== meeting.id), countdowns: meeting.countdownId ? d.countdowns.filter(countdown => countdown.id !== meeting.countdownId) : d.countdowns }))}>Cancel</button></div></div>) : <div className="empty-state">No upcoming events yet.</div>}</div></div>
   </section>;
 }
 
@@ -745,7 +760,7 @@ function CardHeading({ kicker, title, action, onAction }: { kicker: string; titl
 function PageTitle({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) { return <header className="page-title"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{copy}</p></header>; }
 function TaskGroup({ title, subtitle, color, todos, nested, hideHeading, toggleTodo, editTodo, removeTodo, setPriority }: { title: string; subtitle?: string; color: string; todos: Todo[]; nested?: boolean; hideHeading?: boolean; toggleTodo: (id: string) => void; editTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
   const today = toDateInput(new Date());
-  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}{t.reminder && <small className="due-chip reminder-chip">Remind {formatReminder(t.reminder)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><div className="todo-actions"><button className="row-edit" onClick={() => editTodo(t.id)} aria-label={`Edit ${t.text}`}>Edit</button><button className="delete" onClick={() => removeTodo(t.id)} aria-label={`Delete ${t.text}`}>×</button></div></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
+  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.note && <small className="todo-note">{t.note}</small>}{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}{t.reminder && <small className="due-chip reminder-chip">Remind {formatReminder(t.reminder)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><div className="todo-actions"><button className="row-edit" onClick={() => editTodo(t.id)} aria-label={`Edit ${t.text}`}>Edit</button><button className="delete" onClick={() => removeTodo(t.id)} aria-label={`Delete ${t.text}`}>×</button></div></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
 }
 function addCountdown(update: (f: (d: AppData) => AppData) => void) { const title = prompt("Countdown name"); if (!title) return; const date = prompt("Date and time (example: 2026-10-15 09:00)"); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: [...d.countdowns, { id: uid(), title, date: new Date(date).toISOString(), color: swatches[d.countdowns.length % swatches.length] }] })); }
 function editCountdown(update: (f: (d: AppData) => AppData) => void, countdown: Countdown) { const title = prompt("Countdown name", countdown.title); if (!title?.trim()) return; const current = toDateTimeInput(new Date(countdown.date)).replace("T", " "); const date = prompt("Date and time", current); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: d.countdowns.map(item => item.id === countdown.id ? { ...item, title: title.trim(), date: new Date(date).toISOString() } : item) })); }
@@ -782,6 +797,6 @@ function toDateTimeInput(date: Date) { return `${toDateInput(date)}T${toTimeInpu
 function localDayKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 function formatDueDate(value: string) { const date = new Date(`${value}T12:00:00`); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-AU", { day: "numeric", month: "short" }); }
 function formatReminder(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); }
-function formatMeetingTime(meeting: Meeting) { const start = new Date(meeting.startsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }); const end = meeting.endsAt ? new Date(meeting.endsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }) : ""; return end ? `${start}–${end}` : start; }
+function formatMeetingTime(meeting: Meeting) { if (meeting.allDay) return "All day"; const start = new Date(meeting.startsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }); const end = meeting.endsAt ? new Date(meeting.endsAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }) : ""; return end ? `${start}–${end}` : start; }
 function formatReminderLead(minutes: number) { if (minutes === 0) return "at start"; if (minutes === 1440) return "1 day before"; if (minutes >= 60) return `${minutes / 60}h before`; return `${minutes} min before`; }
 function lastSevenDays() { return Array.from({ length: 7 }, (_, index) => { const date = new Date(); date.setHours(12, 0, 0, 0); date.setDate(date.getDate() - (6 - index)); return { key: localDayKey(date), label: date.toLocaleDateString("en-AU", { weekday: "short" }).slice(0, 2) }; }); }

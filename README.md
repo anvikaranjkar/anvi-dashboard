@@ -1,5 +1,15 @@
 # Anvi’s Dashboard
 
+## Deploy on Vercel
+
+1. Upload this folder to a new GitHub repository.
+2. In Vercel, choose **Add New → Project**, import that repository, and deploy.
+3. Vercel automatically uses `npm run build:vercel` through `vercel.json`.
+
+For Spotify live playback, add this Redirect URI in your Spotify developer app after your Vercel project has its final domain:
+
+`https://YOUR-VERCEL-DOMAIN/spotify/callback`
+
 A responsive personal student dashboard for tasks, goals, subject insights, Maths exercises, countdowns, notes, vision-board images, reminders and detailed study statistics.
 
 ## What’s included
