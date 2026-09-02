@@ -2,9 +2,9 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-type Tab = "dashboard" | "subjects" | "goals" | "ideas" | "resources" | "study" | "settings";
+type Tab = "dashboard" | "subjects" | "goals" | "ideas" | "resources" | "study" | "archive" | "settings";
 type Priority = "low" | "medium" | "high";
-type Todo = { id: string; text: string; done: boolean; priority: Priority; reminder?: string; dueDate?: string; note?: string };
+type Todo = { id: string; text: string; done: boolean; priority: Priority; reminder?: string; dueDate?: string; note?: string; archivedAt?: string };
 type Subject = { id: string; name: string; color: string; goodAt: string; improve: string; notes?: string; resources?: Bookmark[]; todos: Todo[]; exercises?: Todo[] };
 type Goal = { id: string; text: string; done: boolean };
 type Countdown = { id: string; title: string; date: string; color: string };
@@ -13,7 +13,8 @@ type ImageItem = { id: string; url: string; caption: string };
 type Bookmark = { id: string; title: string; url: string };
 type Idea = { id: string; title: string; body: string; createdAt: string; color: string; pinned?: boolean };
 type Meeting = { id: string; title: string; startsAt: string; endsAt?: string; details?: string; reminderMinutes?: number; allDay?: boolean; countdownId?: string };
-type TodoComposerState = { subjectId?: string; exercise: boolean; todoId?: string };
+type TodoComposerState = { subjectId?: string; exercise: boolean; todoId?: string; dueDate?: string };
+type ActiveStudyTimer = { subject: string; startedAt: string; note?: string; targetMinutes?: number | null };
 type AppData = {
   profile: { name: string; heroImage: string; quote: string; spotifyUrl: string };
   subjects: Subject[];
@@ -27,6 +28,8 @@ type AppData = {
   dashboardImages: ImageItem[];
   studySessions: StudySession[];
   meetings: Meeting[];
+  activeStudyTimer?: ActiveStudyTimer;
+  displaySettings: { countdownId?: string };
   notificationSettings: { morningSummary: boolean; morningTime: string };
 };
 
@@ -77,13 +80,14 @@ const starter: AppData = {
   dashboardImages: [{ id: "d1", url: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=900&q=80", caption: "This week’s mood" }],
   studySessions: [],
   meetings: [],
+  displaySettings: {},
   notificationSettings: { morningSummary: true, morningTime: "07:30" },
 };
 
 const nav: { id: Tab; label: string; icon: string }[] = [
   { id: "dashboard", label: "Home", icon: "⌂" }, { id: "subjects", label: "Subjects", icon: "▤" },
   { id: "goals", label: "Goals", icon: "◎" }, { id: "ideas", label: "Ideas", icon: "✧" }, { id: "resources", label: "Resources", icon: "◇" },
-  { id: "study", label: "Study log", icon: "◷" }, { id: "settings", label: "Settings", icon: "⚙" },
+  { id: "study", label: "Study log", icon: "◷" }, { id: "archive", label: "Archive", icon: "□" }, { id: "settings", label: "Settings", icon: "⚙" },
 ];
 const horizons = { week: "This Week", term: "This Term", sixMonths: "Next Six Months", year: "This Year · HSC Focus" } as const;
 const swatches = ["#f2b8c6", "#a8c7fa", "#b8ddc0", "#c7b8ee", "#f6cf9e", "#d7dfa5", "#f0b7e3"];
@@ -98,11 +102,12 @@ const SPOTIFY_TOKEN_KEY = "anvis-dashboard-spotify-token";
 const SPOTIFY_VERIFIER_KEY = "anvis-dashboard-spotify-verifier";
 const SPOTIFY_STATE_KEY = "anvis-dashboard-spotify-state";
 const SPOTIFY_LAST_PLAYED_KEY = "anvis-dashboard-spotify-last-played";
+const SPOTIFY_RETURN_KEY = "anvis-dashboard-spotify-return";
 const SUPABASE_URL = "https://iiwjnqfbhzfzwzvccapc.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlpd2pucWZiaHpmend6dmNjYXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4Njk2NTEsImV4cCI6MjA5NDQ0NTY1MX0.PX4XXr9fxtZHqN-hq5iwvkOV3-oYULXi459Zcis6h9Y";
 
 function mergeData(value: Partial<AppData>): AppData {
-  return { ...starter, ...value, profile: { ...starter.profile, ...(value.profile || {}) }, ideas: value.ideas || starter.ideas, goals: { ...starter.goals, ...(value.goals || {}) }, notificationSettings: { ...starter.notificationSettings, ...(value.notificationSettings || {}) } };
+  return { ...starter, ...value, profile: { ...starter.profile, ...(value.profile || {}) }, ideas: value.ideas || starter.ideas, goals: { ...starter.goals, ...(value.goals || {}) }, displaySettings: { ...starter.displaySettings, ...(value.displaySettings || {}) }, notificationSettings: { ...starter.notificationSettings, ...(value.notificationSettings || {}) } };
 }
 
 export default function DashboardApp() {
@@ -126,12 +131,25 @@ export default function DashboardApp() {
   useEffect(() => {
     const cached = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
     let initial = starter;
-    if (cached) { try { initial = mergeData(JSON.parse(cached)); setData(initial); } catch {} }
+    if (cached) { try { initial = mergeData(JSON.parse(cached)); } catch {} }
     const notificationsEnabled = localStorage.getItem(NOTIFICATIONS_ENABLED_KEY) !== "false";
-    setNotifications("Notification" in window && Notification.permission === "granted" && notificationsEnabled);
+    const initialData = initial;
+    queueMicrotask(() => {
+      if (cached) setData(initialData);
+      setNotifications("Notification" in window && Notification.permission === "granted" && notificationsEnabled);
+      setHydrated(true);
+    });
     if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js");
-    setHydrated(true);
     void loadCloud(initial);
+  }, []);
+
+  useEffect(() => {
+    const syncFromAnotherTab = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY || !event.newValue) return;
+      try { setData(mergeData(JSON.parse(event.newValue))); } catch {}
+    };
+    window.addEventListener("storage", syncFromAnotherTab);
+    return () => window.removeEventListener("storage", syncFromAnotherTab);
   }, []);
 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
@@ -140,6 +158,20 @@ export default function DashboardApp() {
     const t = setInterval(() => setTimerElapsed(Math.floor((Date.now() - timerStart) / 1000)), 1000);
     return () => clearInterval(t);
   }, [timerStart]);
+
+  useEffect(() => {
+    const active = data.activeStudyTimer;
+    if (!active) { queueMicrotask(() => { setTimerStart(null); setTimerElapsed(0); }); return; }
+    const started = new Date(active.startedAt).getTime();
+    if (Number.isNaN(started)) return;
+    queueMicrotask(() => {
+      setTimerStart(started);
+      setTimerSubject(active.subject);
+      setTimerNote(active.note || "");
+      setTimerTargetMinutes(active.targetMinutes ?? null);
+      setTimerElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+    });
+  }, [data.activeStudyTimer?.startedAt]);
 
   useEffect(() => {
     if (!timerStart || !timerTargetMinutes || timerElapsed < timerTargetMinutes * 60) return;
@@ -151,7 +183,7 @@ export default function DashboardApp() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     if (!cloudReady) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    setSyncStatus("syncing");
+    queueMicrotask(() => setSyncStatus("syncing"));
     saveTimer.current = setTimeout(() => saveCloud(data), 900);
   }, [data, hydrated, cloudReady]);
 
@@ -268,8 +300,8 @@ export default function DashboardApp() {
     showToast("Test notification sent");
   }
 
-  function addTodo(subjectId?: string, exercise = false) {
-    setTodoComposer({ subjectId, exercise });
+  function addTodo(subjectId?: string, exercise = false, dueDate?: string) {
+    setTodoComposer({ subjectId, exercise, dueDate });
   }
   function editTodo(id: string) {
     if (data.overallTodos.some(todo => todo.id === id)) return setTodoComposer({ exercise: false, todoId: id });
@@ -293,7 +325,7 @@ export default function DashboardApp() {
     setTodoComposer(null);
   }
   function toggleTodo(id: string) {
-    const flip = (items: Todo[]) => items.map(t => t.id === id ? { ...t, done: !t.done } : t);
+    const flip = (items: Todo[]) => items.map(t => t.id === id ? (t.done ? { ...t, done: false, archivedAt: undefined } : { ...t, done: true, archivedAt: new Date().toISOString() }) : t);
     update(d => ({ ...d, overallTodos: flip(d.overallTodos), subjects: d.subjects.map(s => ({ ...s, todos: flip(s.todos), exercises: s.exercises ? flip(s.exercises) : undefined })) }));
   }
   function removeTodo(id: string) {
@@ -305,12 +337,16 @@ export default function DashboardApp() {
     update(d => ({ ...d, overallTodos: set(d.overallTodos), subjects: d.subjects.map(s => ({ ...s, todos: set(s.todos), exercises: s.exercises ? set(s.exercises) : undefined })) }));
     if (priority === "high") notify("High-priority task added to your focus list");
   }
-  function startTimer() { setTimerStart(Date.now()); setTimerElapsed(0); }
+  function startTimer() {
+    const startedAt = new Date();
+    setTimerStart(startedAt.getTime()); setTimerElapsed(0);
+    update(d => ({ ...d, activeStudyTimer: { subject: timerSubject, startedAt: startedAt.toISOString(), note: timerNote.trim() || undefined, targetMinutes: timerTargetMinutes } }));
+  }
   function stopTimer(completed = false) {
     if (!timerStart || timerElapsed < 1) return;
     const targetSeconds = timerTargetMinutes ? timerTargetMinutes * 60 : timerElapsed;
     const session: StudySession = { id: uid(), subject: timerSubject, startedAt: new Date(timerStart).toISOString(), durationSeconds: completed ? targetSeconds : timerElapsed, note: timerNote.trim() || undefined };
-    update(d => ({ ...d, studySessions: [...d.studySessions, session] }));
+    update(d => ({ ...d, studySessions: [...d.studySessions, session], activeStudyTimer: undefined }));
     setTimerStart(null); setTimerElapsed(0); setTimerNote("");
     if (completed) notify(`${timerTargetMinutes}-minute focus finished — lovely work ✦`, `pomodoro-${session.id}`);
     else showToast(`${formatDuration(session.durationSeconds)} logged for ${timerSubject}`);
@@ -343,6 +379,7 @@ export default function DashboardApp() {
       <aside className="sidebar">
         <button className="brand" onClick={() => setTab("dashboard")}><span className="brand-mark">✦</span><span>Anvi’s<br /><em>dashboard</em></span></button>
         <nav>{nav.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span>{item.label}{item.id === "dashboard" && <b>{incomplete}</b>}</button>)}</nav>
+        <a className="display-launch" href="/display" target="_blank" rel="noreferrer"><span>▣</span><div><strong>Open Display</strong><small>Always-on focus view</small></div></a>
         <div className="sidebar-footer">
           <div className={`sync-dot ${syncStatus}`} />
           <div><strong>{syncStatus === "synced" ? "Saved to Supabase" : syncStatus === "syncing" ? "Saving…" : syncStatus === "error" ? "Local backup" : "Connecting…"}</strong><small>{syncStatus === "synced" ? "Automatic cloud sync" : syncStatus === "error" ? "Supabase setup required" : "Loading shared dashboard"}</small></div>
@@ -359,6 +396,7 @@ export default function DashboardApp() {
           {tab === "ideas" && <IdeasView data={data} update={update} />}
           {tab === "resources" && <ResourcesView data={data} update={update} uploadImages={uploadImages} />}
           {tab === "study" && <StudyView data={data} update={update} subject={timerSubject} setSubject={setTimerSubject} start={timerStart} elapsed={timerElapsed} note={timerNote} setNote={setTimerNote} targetMinutes={timerTargetMinutes} setTargetMinutes={setTimerTargetMinutes} startTimer={startTimer} stopTimer={() => stopTimer(false)} showToast={showToast} />}
+          {tab === "archive" && <ArchiveView data={data} restoreTodo={toggleTodo} removeTodo={removeTodo} />}
           {tab === "settings" && <SettingsView data={data} update={update} notifications={notifications} toggleNotifications={toggleNotifications} sendTestNotification={sendTestNotification} status={syncStatus} />}
         </div>
         <nav className="mobile-nav">{nav.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
@@ -378,7 +416,7 @@ function CountdownRail({ data, now, onAdd, onEdit, onRemove }: { data: AppData; 
   return <div className="countdown-rail"><div className="rail-label"><span>◷</span><div><strong>Countdowns</strong><small>next dates first</small></div></div><div className="countdown-scroll">{ordered.map(c => { const diff = Math.max(0, new Date(c.date).getTime() - now); const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); return <div className="countdown-chip" style={{ "--chip": c.color } as React.CSSProperties} key={c.id}><div className="chip-actions"><button onClick={() => onEdit(c)} aria-label={`Edit ${c.title}`}>✎</button><button onClick={() => onRemove(c.id)} aria-label={`Delete ${c.title}`}>×</button></div><span><b>{days}</b>d <b>{hours}</b>h</span><small>{c.title}</small></div> })}<button className="add-countdown" onClick={onAdd}>＋<span>Add date</span></button></div></div>;
 }
 
-function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTodo, removeTodo, setPriority, update, uploadImages }: { data: AppData; now: number; weekSeconds: number; setTab: (t: Tab) => void; toggleTodo: (id: string) => void; addTodo: (s?: string, e?: boolean) => void; editTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void; update: (f: (d: AppData) => AppData) => void; uploadImages: (e: ChangeEvent<HTMLInputElement>, t: "visionImages" | "dashboardImages" | "heroImage") => void }) {
+function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTodo, removeTodo, setPriority, update, uploadImages }: { data: AppData; now: number; weekSeconds: number; setTab: (t: Tab) => void; toggleTodo: (id: string) => void; addTodo: (s?: string, e?: boolean, dueDate?: string) => void; editTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void; update: (f: (d: AppData) => AppData) => void; uploadImages: (e: ChangeEvent<HTMLInputElement>, t: "visionImages" | "dashboardImages" | "heroImage") => void }) {
   const date = new Intl.DateTimeFormat("en-AU", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
   const today = toDateInput(new Date());
   const todayItems = [
@@ -387,7 +425,8 @@ function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTod
   ].filter(item => !item.todo.done && item.todo.dueDate === today);
   return <>
     <section className="hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(24,31,44,.82), rgba(24,31,44,.2)), url(${data.profile.heroImage})` }}><label className="hero-upload">↥ Change cover<input hidden type="file" accept="image/*" onChange={event => uploadImages(event, "heroImage")} /></label><div><span className="eyebrow">{date}</span><h1>Hi {data.profile.name},<br /><em>make today count.</em></h1><p>{data.profile.quote}</p></div><div className="hero-stats"><span><b>{data.studySessions.filter(s => isToday(s.startedAt)).length}</b> sessions today</span><span><b>{formatDuration(weekSeconds)}</b> this week</span></div></section>
-    <PlannerHub data={data} update={update} toggleTodo={toggleTodo} editTodo={editTodo} />
+    <div className="dashboard-display-link"><div><span>FOCUS DISPLAY</span><strong>Turn this device into your always-on study desk.</strong></div><a href="/display" target="_blank" rel="noreferrer">Open Display ↗</a></div>
+    <PlannerHub data={data} update={update} toggleTodo={toggleTodo} editTodo={editTodo} addTodo={addTodo} />
     <div className="focus-row">
       <section className="card day-plan"><CardHeading kicker="TODAY" title="What to do for the day" /><p>{todayItems.length ? `${todayItems.length} ${todayItems.length === 1 ? "thing" : "things"} due today. Finish one, and it disappears from this list.` : "Nothing due today — your day is clear."}</p>{todayItems.map(item => <div className="day-plan-row" key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)} aria-label={`Complete ${item.todo.text}`} /><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)} aria-label={`Edit ${item.todo.text}`}>Edit</button></div>)}</section>
       <SpotifyNowPlaying />
@@ -411,8 +450,10 @@ function SpotifyNowPlaying() {
 
   useEffect(() => {
     let stored: SpotifyToken | null = null;
+    let last: SpotifyPlayback | null = null;
     try { stored = JSON.parse(localStorage.getItem(SPOTIFY_TOKEN_KEY) || "null"); } catch {}
-    try { setLastPlayback(JSON.parse(localStorage.getItem(SPOTIFY_LAST_PLAYED_KEY) || "null")); } catch {}
+    try { last = JSON.parse(localStorage.getItem(SPOTIFY_LAST_PLAYED_KEY) || "null"); } catch {}
+    queueMicrotask(() => setLastPlayback(last));
     const params = new URLSearchParams(window.location.search);
     const code = params.get("spotify_code");
     const returnedState = params.get("spotify_state");
@@ -420,15 +461,17 @@ function SpotifyNowPlaying() {
       const verifier = localStorage.getItem(SPOTIFY_VERIFIER_KEY);
       const expectedState = localStorage.getItem(SPOTIFY_STATE_KEY);
       history.replaceState({}, "", window.location.pathname);
-      if (!verifier || !returnedState || returnedState !== expectedState) { setStatus("error"); return; }
+      if (!verifier || !returnedState || returnedState !== expectedState) { queueMicrotask(() => setStatus("error")); return; }
       void exchangeSpotifyCode(code, verifier).then(next => {
         saveSpotifyToken(next); setToken(next); setStatus("ready");
         localStorage.removeItem(SPOTIFY_VERIFIER_KEY); localStorage.removeItem(SPOTIFY_STATE_KEY);
       }).catch(() => setStatus("error"));
       return;
     }
-    setToken(stored);
-    setStatus(stored ? "ready" : "disconnected");
+    queueMicrotask(() => {
+      setToken(stored);
+      setStatus(stored ? "ready" : "disconnected");
+    });
   }, []);
 
   useEffect(() => {
@@ -478,7 +521,7 @@ async function connectSpotify() {
   const state = randomSpotifyString(24);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-  localStorage.setItem(SPOTIFY_VERIFIER_KEY, verifier); localStorage.setItem(SPOTIFY_STATE_KEY, state);
+  localStorage.setItem(SPOTIFY_VERIFIER_KEY, verifier); localStorage.setItem(SPOTIFY_STATE_KEY, state); localStorage.setItem(SPOTIFY_RETURN_KEY, "/");
   const redirectUri = `${window.location.origin}/spotify/callback`;
   const params = new URLSearchParams({ client_id: SPOTIFY_CLIENT_ID, response_type: "code", redirect_uri: redirectUri, scope: "user-read-currently-playing user-read-playback-state", code_challenge_method: "S256", code_challenge: challenge, state });
   window.location.assign(`https://accounts.spotify.com/authorize?${params}`);
@@ -646,7 +689,7 @@ function StudyView({ data, update, subject, setSubject, start, elapsed, note, se
 
 function TodoComposer({ target, subjects, initial, onSave, onClose }: { target: TodoComposerState; subjects: Subject[]; initial?: Todo; onSave: (text: string, dueDate?: string, reminder?: string, note?: string) => void; onClose: () => void }) {
   const [text, setText] = useState(initial?.text || "");
-  const [dueDate, setDueDate] = useState(initial?.dueDate || "");
+  const [dueDate, setDueDate] = useState(initial?.dueDate || target.dueDate || "");
   const [reminder, setReminder] = useState(initial?.reminder ? toDateTimeInput(new Date(initial.reminder)) : "");
   const [note, setNote] = useState(initial?.note || "");
   const subject = subjects.find(s => s.id === target.subjectId);
@@ -659,7 +702,7 @@ function TodoComposer({ target, subjects, initial, onSave, onClose }: { target: 
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><form className="todo-composer" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}><button className="modal-close" type="button" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">{initial ? "UPDATE TO-DO" : "NEW TO-DO"}</span><h2>{title}</h2><label>What needs doing?<input autoFocus value={text} onChange={event => setText(event.target.value)} placeholder={target.exercise ? "Exercise or chapter" : "Task name"} required /></label><label>Complete by <small>optional</small><input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} /></label><label>Remind me <small>optional</small><input type="datetime-local" value={reminder} onChange={event => setReminder(event.target.value)} /></label><label>Notes <small>optional</small><textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Extra details, links or a reminder to yourself" /></label><div className="composer-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button" type="submit">{initial ? "Save changes" : "Add to-do"}</button></div></form></div>;
 }
 
-function PlannerHub({ data, update, toggleTodo, editTodo }: { data: AppData; update: (f: (d: AppData) => AppData) => void; toggleTodo: (id: string) => void; editTodo: (id: string) => void }) {
+function PlannerHub({ data, update, toggleTodo, editTodo, addTodo }: { data: AppData; update: (f: (d: AppData) => AppData) => void; toggleTodo: (id: string) => void; editTodo: (id: string) => void; addTodo: (subjectId?: string, exercise?: boolean, dueDate?: string) => void }) {
   const initialMonth = new Date(); initialMonth.setDate(1); initialMonth.setHours(12, 0, 0, 0);
   const [month, setMonth] = useState(initialMonth);
   const [showMeetingForm, setShowMeetingForm] = useState(false);
@@ -676,10 +719,10 @@ function PlannerHub({ data, update, toggleTodo, editTodo }: { data: AppData; upd
   const todayKey = toDateInput(new Date());
   const [selectedDay, setSelectedDay] = useState(todayKey);
   const datedTodos = [
-    ...data.overallTodos.filter(todo => todo.dueDate).map(todo => ({ todo, source: "Personal", color: "#f6cf9e" })),
+    ...data.overallTodos.filter(todo => todo.dueDate && !todo.done && !todo.archivedAt).map(todo => ({ todo, source: "Personal", color: "#f6cf9e" })),
     ...data.subjects.flatMap(subject => [
-      ...subject.todos.filter(todo => todo.dueDate).map(todo => ({ todo, source: subject.name, color: subject.color })),
-      ...(subject.exercises || []).filter(todo => todo.dueDate).map(todo => ({ todo, source: `${subject.name} exercises`, color: subject.color })),
+      ...subject.todos.filter(todo => todo.dueDate && !todo.done && !todo.archivedAt).map(todo => ({ todo, source: subject.name, color: subject.color })),
+      ...(subject.exercises || []).filter(todo => todo.dueDate && !todo.done && !todo.archivedAt).map(todo => ({ todo, source: `${subject.name} exercises`, color: subject.color })),
     ]),
   ];
   const dueAgenda = datedTodos.filter(item => !item.todo.done).sort((a, b) => (a.todo.dueDate || "").localeCompare(b.todo.dueDate || "")).slice(0, 7);
@@ -737,11 +780,20 @@ function PlannerHub({ data, update, toggleTodo, editTodo }: { data: AppData; upd
         const events = [...taskEvents.map(item => ({ id: item.todo.id, label: `${item.source}: ${item.todo.text}`, color: item.color, type: "task" })), ...meetingEvents.map(meeting => ({ id: meeting.id, label: `${meeting.allDay ? "All day · " : ""}${meeting.title}`, color: "#c7b8ee", type: "meeting" }))];
         return <button type="button" className={`calendar-cell ${key === todayKey ? "today" : ""} ${key === selectedDay ? "selected" : ""}`} key={key} onClick={() => setSelectedDay(key)} aria-label={`Open ${new Date(`${key}T12:00:00`).toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}`}><b>{day}</b><div>{events.slice(0, 2).map(event => <span className={`calendar-event ${event.type}`} style={{ "--event": event.color } as React.CSSProperties} title={event.label} key={`${event.type}-${event.id}`}><i />{event.label}</span>)}{events.length > 2 && <small>+{events.length - 2} more</small>}</div></button>;
       })}</div>
-      <section className="selected-day"><div className="selected-day-heading"><div><small>DAY DETAILS</small><h3>{selectedDate.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</h3></div><div className="selected-day-actions"><span>{selectedTodos.length + selectedMeetings.length + selectedStudy.length} items</span><button onClick={() => openNewMeeting(selectedDay)}>＋ Add event</button></div></div><div className="day-detail-grid"><div><h4>Timings & events</h4>{selectedMeetings.map(meeting => <div className="day-timeline-row meeting" key={meeting.id}><time>{formatMeetingTime(meeting)}</time><i /><div><strong>{meeting.title}</strong>{meeting.details && <small>{meeting.details}</small>}</div><button onClick={() => editMeeting(meeting)}>Edit</button></div>)}{selectedStudy.map(session => <div className="day-timeline-row study" key={session.id}><time>{new Date(session.startedAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}</time><i /><div><strong>{session.subject} study</strong><small>{formatDuration(session.durationSeconds)}{session.note ? ` · ${session.note}` : ""}</small></div></div>)}{!selectedMeetings.length && !selectedStudy.length && <div className="day-empty">No events or study sessions.</div>}</div><div><h4>To-dos</h4>{selectedTodos.map(item => <div className={`day-todo ${item.todo.done ? "done" : ""}`} key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)}>{item.todo.done ? "✓" : ""}</button><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}{item.todo.note ? ` · ${item.todo.note}` : ""}{item.todo.reminder ? ` · ${formatReminder(item.todo.reminder)}` : ""}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)}>Edit</button></div>)}{!selectedTodos.length && <div className="day-empty">No to-dos due on this day.</div>}</div></div></section>
+      <section className="selected-day"><div className="selected-day-heading"><div><small>DAY DETAILS</small><h3>{selectedDate.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</h3></div><div className="selected-day-actions"><span>{selectedTodos.length + selectedMeetings.length + selectedStudy.length} items</span><button onClick={() => addTodo(undefined, false, selectedDay)}>＋ Add to-do</button><button onClick={() => openNewMeeting(selectedDay)}>＋ Add event</button></div></div><div className="day-detail-grid"><div><h4>Timings & events</h4>{selectedMeetings.map(meeting => <div className="day-timeline-row meeting" key={meeting.id}><time>{formatMeetingTime(meeting)}</time><i /><div><strong>{meeting.title}</strong>{meeting.details && <small>{meeting.details}</small>}</div><button onClick={() => editMeeting(meeting)}>Edit</button></div>)}{selectedStudy.map(session => <div className="day-timeline-row study" key={session.id}><time>{new Date(session.startedAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}</time><i /><div><strong>{session.subject} study</strong><small>{formatDuration(session.durationSeconds)}{session.note ? ` · ${session.note}` : ""}</small></div></div>)}{!selectedMeetings.length && !selectedStudy.length && <div className="day-empty">No events or study sessions.</div>}</div><div><h4>To-dos</h4>{selectedTodos.map(item => <div className="day-todo" key={item.todo.id}><button className="check" onClick={() => toggleTodo(item.todo.id)} /><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}{item.todo.note ? ` · ${item.todo.note}` : ""}{item.todo.reminder ? ` · ${formatReminder(item.todo.reminder)}` : ""}</small></div><button className="row-edit" onClick={() => editTodo(item.todo.id)}>Edit</button></div>)}{!selectedTodos.length && <div className="day-empty">No to-dos due on this day.</div>}</div></div></section>
       <div className="due-agenda"><div className="agenda-title"><strong>What’s due next</strong><small>Tasks with completion dates</small></div>{dueAgenda.length ? dueAgenda.map(item => <div className="due-agenda-row" key={item.todo.id}><i style={{ background: item.color }} /><div><strong>{item.todo.text}</strong><small>{item.source}</small></div><time className={(item.todo.dueDate || "") < todayKey ? "overdue" : ""}>{(item.todo.dueDate || "") < todayKey ? "Overdue · " : ""}{formatDueDate(item.todo.dueDate || "")}</time></div>) : <div className="empty-state">Add a completion date to a to-do and it will appear here.</div>}</div>
     </div>
     <div className="card meetings-card"><CardHeading kicker="SCHEDULE" title="Upcoming events" action={showMeetingForm && !editingMeetingId ? "Close" : "＋ Add event"} onAction={() => openNewMeeting(selectedDay)} />{showMeetingForm && <form className="meeting-form" onSubmit={saveMeeting}><span className="form-mode">{editingMeetingId ? "EDIT EVENT" : "NEW EVENT"}</span><label>Event<input autoFocus value={meetingTitle} onChange={event => setMeetingTitle(event.target.value)} placeholder="Event title" required /></label><div><label>Date<input type="date" value={meetingDate} onChange={event => setMeetingDate(event.target.value)} required /></label>{!eventAllDay && <><label>Start time<input type="time" value={meetingTime} onChange={event => setMeetingTime(event.target.value)} required /></label><label>End time<input type="time" value={meetingEndTime} onChange={event => setMeetingEndTime(event.target.value)} required /></label></>}<label>Alert me<select value={meetingReminder} onChange={event => setMeetingReminder(event.target.value)}>{[[0, "At start"], [5, "5 min before"], [10, "10 min before"], [15, "15 min before"], [30, "30 min before"], [60, "1 hour before"], [1440, "1 day before"]].map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div><div className="event-options"><label><input type="checkbox" checked={eventAllDay} onChange={event => setEventAllDay(event.target.checked)} />All day</label><label><input type="checkbox" checked={eventCountdown} onChange={event => setEventCountdown(event.target.checked)} />Also add to countdowns</label></div><label>Details <small>optional</small><input value={meetingDetails} onChange={event => setMeetingDetails(event.target.value)} placeholder="Location, link or notes" /></label>{meetingError && <p className="form-error">{meetingError}</p>}<div className="meeting-form-actions"><button className="button secondary" type="button" onClick={resetMeetingForm}>Cancel</button><button className="button" type="submit">{editingMeetingId ? "Save changes" : "Save event"}</button></div></form>}<div className="meeting-list">{upcomingMeetings.length ? upcomingMeetings.map(meeting => <div className="meeting-row" key={meeting.id}><time><b>{new Date(meeting.startsAt).getDate()}</b><span>{new Date(meeting.startsAt).toLocaleDateString("en-AU", { month: "short" })}</span></time><div><strong>{meeting.title}</strong><small>{formatMeetingTime(meeting)}{meeting.details ? ` · ${meeting.details}` : ""}</small><span className="meeting-reminder">{meeting.countdownId ? "In countdowns · " : ""}Alert {formatReminderLead(meeting.reminderMinutes ?? 15)}</span></div><div className="meeting-actions"><button onClick={() => editMeeting(meeting)}>Edit</button><button onClick={() => update(d => ({ ...d, meetings: d.meetings.filter(item => item.id !== meeting.id), countdowns: meeting.countdownId ? d.countdowns.filter(countdown => countdown.id !== meeting.countdownId) : d.countdowns }))}>Cancel</button></div></div>) : <div className="empty-state">No upcoming events yet.</div>}</div></div>
   </section>;
+}
+
+function ArchiveView({ data, restoreTodo, removeTodo }: { data: AppData; restoreTodo: (id: string) => void; removeTodo: (id: string) => void }) {
+  const groups = [
+    { name: "Personal", color: "#f6cf9e", todos: data.overallTodos.filter(todo => todo.done || todo.archivedAt) },
+    ...data.subjects.map(subject => ({ name: subject.name, color: subject.color, todos: [...subject.todos, ...(subject.exercises || [])].filter(todo => todo.done || todo.archivedAt) })),
+  ].filter(group => group.todos.length);
+  const total = groups.reduce((sum, group) => sum + group.todos.length, 0);
+  return <><PageTitle eyebrow="COMPLETED WORK" title="Your archive." copy="Finished tasks leave your active dashboard immediately, but they stay safely here until you restore or permanently remove them." /><section className="card archive-card"><CardHeading kicker="ALL COMPLETED" title={`${total} archived ${total === 1 ? "item" : "items"}`} />{groups.length ? groups.map(group => <div className="archive-group" key={group.name}><div className="archive-group-title"><i style={{ background: group.color }} /><strong>{group.name}</strong><span>{group.todos.length}</span></div>{group.todos.sort((a, b) => (b.archivedAt || "").localeCompare(a.archivedAt || "")).map(todo => <div className="archive-row" key={todo.id}><span>✓</span><div><strong>{todo.text}</strong><small>{todo.note || (todo.dueDate ? `Due ${formatDueDate(todo.dueDate)}` : "Completed")}</small></div><button onClick={() => restoreTodo(todo.id)}>Restore</button><button className="archive-delete" onClick={() => removeTodo(todo.id)} aria-label={`Delete ${todo.text} permanently`}>Delete</button></div>)}</div>) : <div className="archive-empty"><span>✦</span><h3>Nothing archived yet.</h3><p>Tick off a to-do and it will move here automatically.</p></div>}</section></>;
 }
 
 function SettingsView({ data, update, notifications, toggleNotifications, sendTestNotification, status }: { data: AppData; update: (f: (d: AppData) => AppData) => void; notifications: boolean; toggleNotifications: () => void; sendTestNotification: () => void; status: string }) {
@@ -760,7 +812,8 @@ function CardHeading({ kicker, title, action, onAction }: { kicker: string; titl
 function PageTitle({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) { return <header className="page-title"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{copy}</p></header>; }
 function TaskGroup({ title, subtitle, color, todos, nested, hideHeading, toggleTodo, editTodo, removeTodo, setPriority }: { title: string; subtitle?: string; color: string; todos: Todo[]; nested?: boolean; hideHeading?: boolean; toggleTodo: (id: string) => void; editTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void }) {
   const today = toDateInput(new Date());
-  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{todos.filter(t => !t.done).length}</b></div>}{todos.map(t => <div className={`todo-row ${t.done ? "done" : ""}`} key={t.id}><button className="check" onClick={() => toggleTodo(t.id)}>{t.done ? "✓" : ""}</button><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.note && <small className="todo-note">{t.note}</small>}{t.dueDate && <small className={`due-chip ${!t.done && t.dueDate < today ? "overdue" : ""}`}>{!t.done && t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}{t.reminder && <small className="due-chip reminder-chip">Remind {formatReminder(t.reminder)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><div className="todo-actions"><button className="row-edit" onClick={() => editTodo(t.id)} aria-label={`Edit ${t.text}`}>Edit</button><button className="delete" onClick={() => removeTodo(t.id)} aria-label={`Delete ${t.text}`}>×</button></div></div>)}{todos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
+  const visibleTodos = todos.filter(todo => !todo.done && !todo.archivedAt);
+  return <div className={`task-group ${nested ? "nested" : ""}`}>{!hideHeading && <div className="task-group-title"><span style={{ background: color }}>{title.slice(0, 2)}</span><div><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div><b>{visibleTodos.length}</b></div>}{visibleTodos.map(t => <div className="todo-row" key={t.id}><button className="check" onClick={() => toggleTodo(t.id)} /><span className="todo-copy"><span className="todo-text">{t.text}</span>{t.note && <small className="todo-note">{t.note}</small>}{t.dueDate && <small className={`due-chip ${t.dueDate < today ? "overdue" : ""}`}>{t.dueDate < today ? "Overdue" : "Due"} {formatDueDate(t.dueDate)}</small>}{t.reminder && <small className="due-chip reminder-chip">Remind {formatReminder(t.reminder)}</small>}</span><select aria-label="Priority" value={t.priority} onChange={e => setPriority(t.id, e.target.value as Priority)} className={`priority ${t.priority}`}><option value="low">Low</option><option value="medium">Med</option><option value="high">High</option></select><div className="todo-actions"><button className="row-edit" onClick={() => editTodo(t.id)} aria-label={`Edit ${t.text}`}>Edit</button><button className="delete" onClick={() => removeTodo(t.id)} aria-label={`Delete ${t.text}`}>×</button></div></div>)}{visibleTodos.length === 0 && <div className="empty-row">Nothing here — nice work.</div>}</div>;
 }
 function addCountdown(update: (f: (d: AppData) => AppData) => void) { const title = prompt("Countdown name"); if (!title) return; const date = prompt("Date and time (example: 2026-10-15 09:00)"); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: [...d.countdowns, { id: uid(), title, date: new Date(date).toISOString(), color: swatches[d.countdowns.length % swatches.length] }] })); }
 function editCountdown(update: (f: (d: AppData) => AppData) => void, countdown: Countdown) { const title = prompt("Countdown name", countdown.title); if (!title?.trim()) return; const current = toDateTimeInput(new Date(countdown.date)).replace("T", " "); const date = prompt("Date and time", current); if (!date || Number.isNaN(new Date(date).getTime())) return; update(d => ({ ...d, countdowns: d.countdowns.map(item => item.id === countdown.id ? { ...item, title: title.trim(), date: new Date(date).toISOString() } : item) })); }

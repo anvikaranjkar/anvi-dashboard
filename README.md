@@ -19,13 +19,15 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 - Seven-day study chart, subject breakdown and week-over-week comparison
 - Overall todos grouped by subject, including required Maths exercises
 - Editable todo completion dates, a dedicated today list and a monthly due-date calendar
-- Clickable calendar days with a full agenda of meetings, study sessions and due to-dos
+- Clickable calendar days with a full agenda and one-tap creation of dated to-dos
+- A separate archive where completed tasks can be restored or permanently removed
 - Upcoming meeting planner with editable dates, start/end times, details and per-meeting alert timing
 - Installable web app for iPhone and Mac with native-style notification support
 - Timed todo reminders, flexible meeting alerts and a configurable morning summary
 - Goals by time horizon, chronologically ordered countdowns, bookmarks, notes and square bulk-upload image boards
 - Subject-specific resource links and notebooks, plus a dedicated editable Ideas page
 - Computer-uploaded home covers and an optional Spotify track, album or playlist player
+- A responsive `/display` focus screen with a flip clock, today’s tasks, active study timer, optional countdown and live Spotify artwork ambience
 - Automatic Supabase sync for cross-device data and image storage
 - JSON export/import backup
 
@@ -53,6 +55,8 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+For the always-on iPad, laptop or phone view, open `http://localhost:3000/display`. After deployment, use `https://YOUR-VERCEL-DOMAIN/display` and tap **Full screen**.
 
 ## Production check
 
