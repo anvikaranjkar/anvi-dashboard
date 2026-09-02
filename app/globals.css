@@ -77,8 +77,6 @@ img { display: block; max-width: 100%; }
 .hero-stats span { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
 .hero-stats b { display: block; font: 600 25px var(--serif); text-transform: none; letter-spacing: -.03em; }
 .focus-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; margin-top: 22px; align-items: stretch; }
-.dashboard-display-link { margin-top: 22px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #a89ac8; border-radius: 15px; background: linear-gradient(110deg, #eee9f7, #e5eff6); }
-.dashboard-display-link span, .dashboard-display-link strong { display: block; }.dashboard-display-link span { margin-bottom: 3px; color: #70618f; font-size: 8px; font-weight: 800; letter-spacing: .14em; }.dashboard-display-link strong { font: 600 16px var(--serif); }.dashboard-display-link a { flex: 0 0 auto; padding: 9px 13px; border-radius: 999px; background: var(--ink); color: white; text-decoration: none; font-size: 9px; font-weight: 750; }
 .focus-row > .card { min-width: 0; }
 .day-plan { padding: 23px 26px; background: linear-gradient(120deg, rgba(255,255,255,.94), rgba(239,235,250,.78)); }
 .day-plan > p { margin: 13px 0 5px; color: var(--muted); font-family: var(--serif); font-style: italic; }
@@ -570,7 +568,6 @@ img { display: block; max-width: 100%; }
   .session-row { grid-template-columns: 34px 1fr auto 20px; }
   .bar-row { grid-template-columns: 72px 1fr 50px; }
   .toast { right: 15px; bottom: 80px; }
-  .dashboard-display-link { align-items: flex-start; flex-direction: column; }
   .archive-card { padding: 20px 14px; }
   .archive-row { grid-template-columns: 25px minmax(0, 1fr) auto; padding: 8px 0; }.archive-row .archive-delete { grid-column: 3; }
 }

@@ -85,12 +85,14 @@ export default function DisplayApp() {
   ].filter(item => item.todo.dueDate === todayKey && !item.todo.done && !item.todo.archivedAt), [data, todayKey]);
   const selectedCountdown = data.countdowns.find(item => item.id === data.displaySettings?.countdownId);
   const countdownMs = selectedCountdown ? new Date(selectedCountdown.date).getTime() - now.getTime() : 0;
+  const countdownPassed = countdownMs <= 0;
+  const countdownDistance = Math.abs(countdownMs);
   const activeTimer = data.activeStudyTimer;
   const activeSeconds = activeTimer ? Math.max(0, Math.floor((now.getTime() - new Date(activeTimer.startedAt).getTime()) / 1000)) : 0;
   const track = playback?.item;
   const cover = track?.album?.images?.[0]?.url;
-  const clock = now.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: true }).replace(" ", "").toUpperCase();
-  const [timePart, meridiem = ""] = clock.match(/(\d{1,2}:\d{2})(AM|PM)/)?.slice(1) || [clock, ""];
+  const clock = now.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }).replace(" ", "").toUpperCase();
+  const [timePart, meridiem = ""] = clock.match(/(\d{1,2}:\d{2}:\d{2})(AM|PM)/)?.slice(1) || [clock, ""];
 
   async function updateAndSave(next: DisplayData) {
     setData(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -111,7 +113,7 @@ export default function DisplayApp() {
       <div className={styles.todayPanel}><div className={styles.panelHeading}><div><span>TODAY</span><h2>What matters now</h2></div><b>{todos.length}</b></div><div className={styles.todoList}>{todos.length ? todos.map(item => <button className={styles.todo} onClick={() => archiveTodo(item.todo.id)} key={item.todo.id}><i style={{ "--todo-colour": item.color } as React.CSSProperties} /><span><strong>{item.todo.text}</strong><small>{item.source}{item.todo.note ? ` · ${item.todo.note}` : ""}</small></span><em>✓</em></button>) : <div className={styles.clearDay}><span>✦</span><strong>Your day is clear.</strong><small>Anything due today will appear here.</small></div>}</div></div>
       <div className={styles.statusColumn}>
         {activeTimer && <article className={styles.timerCard}><span>STUDY SESSION ACTIVE</span><div><i>◷</i><strong>{formatClock(activeSeconds)}</strong></div><h3>{activeTimer.subject}</h3>{activeTimer.note && <p>{activeTimer.note}</p>}{activeTimer.targetMinutes && <small>{Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds) > 0 ? `${formatClock(Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds))} remaining` : "Target complete"}</small>}</article>}
-        {selectedCountdown && <article className={styles.countdownCard} style={{ "--count-colour": selectedCountdown.color } as React.CSSProperties}><span>COUNTING DOWN TO</span><h3>{selectedCountdown.title}</h3><div><strong>{Math.max(0, Math.floor(countdownMs / 86400000))}</strong><small>days</small><strong>{Math.max(0, Math.floor((countdownMs % 86400000) / 3600000))}</strong><small>hours</small></div></article>}
+        {selectedCountdown && <article className={styles.countdownCard} style={{ "--count-colour": selectedCountdown.color } as React.CSSProperties}><span>{countdownPassed ? "TIME SINCE" : "COUNTING DOWN TO"}</span><h3>{selectedCountdown.title}</h3><div><strong>{Math.floor(countdownDistance / 86400000)}</strong><small>days</small><strong>{Math.floor((countdownDistance % 86400000) / 3600000)}</strong><small>hours</small></div></article>}
       </div>
       {track && <a className={styles.musicPanel} href={track.external_urls?.spotify} target="_blank" rel="noreferrer"><img src={cover} alt={`${track.album?.name || track.name} cover`} /><div><span>PLAYING NOW</span><h2>{track.name}</h2><p>{track.artists?.map(artist => artist.name).join(", ")}</p><small>{track.album?.name}</small><div className={styles.musicProgress}><i style={{ width: `${track.duration_ms ? Math.min(100, (playback?.progress_ms || 0) / track.duration_ms * 100) : 0}%` }} /></div></div></a>}
     </section>
