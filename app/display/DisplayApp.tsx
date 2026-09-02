@@ -8,7 +8,8 @@ type Todo = { id: string; text: string; done: boolean; priority?: string; dueDat
 type Subject = { id: string; name: string; color: string; todos: Todo[]; exercises?: Todo[] };
 type Countdown = { id: string; title: string; date: string; color: string };
 type ActiveStudyTimer = { subject: string; startedAt: string; note?: string; targetMinutes?: number | null };
-type DisplayData = { profile?: { name?: string }; overallTodos: Todo[]; subjects: Subject[]; countdowns: Countdown[]; activeStudyTimer?: ActiveStudyTimer; displaySettings?: { countdownId?: string } };
+type DisplaySettings = { countdownId?: string; showTodos?: boolean; showTimer?: boolean; showCountdown?: boolean };
+type DisplayData = { profile?: { name?: string }; overallTodos: Todo[]; subjects: Subject[]; countdowns: Countdown[]; activeStudyTimer?: ActiveStudyTimer; displaySettings?: DisplaySettings };
 type SpotifyToken = { access_token: string; refresh_token?: string; expires_at: number };
 type SpotifyTrack = { id: string; name: string; duration_ms: number; external_urls?: { spotify?: string }; artists?: { name: string }[]; album?: { name: string; images?: { url: string }[] } };
 type SpotifyPlayback = { is_playing: boolean; progress_ms: number; item?: SpotifyTrack };
@@ -30,6 +31,7 @@ export default function DisplayApp() {
   const [loaded, setLoaded] = useState(false);
   const [token, setToken] = useState<SpotifyToken | null>(null);
   const [playback, setPlayback] = useState<SpotifyPlayback | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   useEffect(() => {
     try { const cached = normalise(JSON.parse(localStorage.getItem(STORAGE_KEY) || "null")); queueMicrotask(() => setData(cached)); } catch {}
@@ -91,6 +93,10 @@ export default function DisplayApp() {
   const activeSeconds = activeTimer ? Math.max(0, Math.floor((now.getTime() - new Date(activeTimer.startedAt).getTime()) / 1000)) : 0;
   const track = playback?.item;
   const cover = track?.album?.images?.[0]?.url;
+  const showTodos = data.displaySettings?.showTodos !== false;
+  const showTimer = data.displaySettings?.showTimer !== false && Boolean(activeTimer);
+  const showCountdown = data.displaySettings?.showCountdown !== false && Boolean(selectedCountdown);
+  const hasStatus = showTimer || showCountdown;
   const clock = now.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }).replace(" ", "").toUpperCase();
   const [timePart, meridiem = ""] = clock.match(/(\d{1,2}:\d{2}:\d{2})(AM|PM)/)?.slice(1) || [clock, ""];
 
@@ -103,23 +109,27 @@ export default function DisplayApp() {
     void updateAndSave({ ...data, overallTodos: archive(data.overallTodos), subjects: data.subjects.map(subject => ({ ...subject, todos: archive(subject.todos), exercises: subject.exercises ? archive(subject.exercises) : undefined })) });
   }
   function chooseCountdown(id: string) { void updateAndSave({ ...data, displaySettings: { ...data.displaySettings, countdownId: id || undefined } }); }
+  function setVisible(key: "showTodos" | "showTimer" | "showCountdown", visible: boolean) { void updateAndSave({ ...data, displaySettings: { ...data.displaySettings, [key]: visible } }); }
 
   return <main className={`${styles.display} ${track ? styles.musicActive : ""}`}>
     {cover && <div className={styles.albumAmbience} style={{ backgroundImage: `url(${cover})` }} />}
     <div className={styles.veil} />
-    <header className={styles.topbar}><Link href="/" aria-label="Back to dashboard"><span>✦</span><strong>Anvi’s Display</strong></Link><div className={styles.topActions}><label>Countdown<select value={data.displaySettings?.countdownId || ""} onChange={event => chooseCountdown(event.target.value)}><option value="">Off</option>{data.countdowns.map(item => <option value={item.id} key={item.id}>{item.title}</option>)}</select></label>{!token && <button onClick={() => void connectSpotifyForDisplay()}>Connect Spotify</button>}<button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></div></header>
+    <header className={styles.topbar}><Link href="/" aria-label="Back to dashboard"><span>✦</span><strong>Anvi’s Display</strong></Link><div className={styles.topActions}>{!token && <button onClick={() => void connectSpotifyForDisplay()}>Connect Spotify</button>}<button aria-expanded={editorOpen} onClick={() => setEditorOpen(value => !value)}>Edit display</button><button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></div></header>
+    {editorOpen && <div className={styles.editorBackdrop} onClick={() => setEditorOpen(false)}><section className={styles.displayEditor} role="dialog" aria-modal="true" aria-label="Edit display" onClick={event => event.stopPropagation()}><div className={styles.editorHeading}><div><span>DISPLAY OPTIONS</span><h2>Choose what appears</h2></div><button onClick={() => setEditorOpen(false)} aria-label="Close display options">×</button></div><label className={styles.editorSelect}>Featured countdown<select value={data.displaySettings?.countdownId || ""} onChange={event => chooseCountdown(event.target.value)}><option value="">None</option>{data.countdowns.map(item => <option value={item.id} key={item.id}>{item.title}</option>)}</select></label><div className={styles.visibilityList}><VisibilityToggle label="Today’s to-dos" checked={showTodos} onChange={value => setVisible("showTodos", value)} /><VisibilityToggle label="Active study timer" checked={data.displaySettings?.showTimer !== false} onChange={value => setVisible("showTimer", value)} /><VisibilityToggle label="Countdown" checked={data.displaySettings?.showCountdown !== false} onChange={value => setVisible("showCountdown", value)} /></div><p>Spotify artwork appears automatically whenever music is playing.</p><button className={styles.doneButton} onClick={() => setEditorOpen(false)}>Done</button></section></div>}
     <section className={styles.clockArea}><p>{now.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</p><div className={styles.flipClock} aria-label={`Current time ${timePart} ${meridiem}`}>{timePart.split("").map((character, index) => character === ":" ? <span className={styles.colon} key={index}>:</span> : <span className={styles.digit} key={index}><i>{character}</i></span>)}<em>{meridiem}</em></div><h1>{getGreeting(now)}, {data.profile?.name || "Anvi"}.</h1></section>
-    <section className={`${styles.content} ${track ? styles.withMusic : ""}`}>
-      <div className={styles.todayPanel}><div className={styles.panelHeading}><div><span>TODAY</span><h2>What matters now</h2></div><b>{todos.length}</b></div><div className={styles.todoList}>{todos.length ? todos.map(item => <button className={styles.todo} onClick={() => archiveTodo(item.todo.id)} key={item.todo.id}><i style={{ "--todo-colour": item.color } as React.CSSProperties} /><span><strong>{item.todo.text}</strong><small>{item.source}{item.todo.note ? ` · ${item.todo.note}` : ""}</small></span><em>✓</em></button>) : <div className={styles.clearDay}><span>✦</span><strong>Your day is clear.</strong><small>Anything due today will appear here.</small></div>}</div></div>
-      <div className={styles.statusColumn}>
-        {activeTimer && <article className={styles.timerCard}><span>STUDY SESSION ACTIVE</span><div><i>◷</i><strong>{formatClock(activeSeconds)}</strong></div><h3>{activeTimer.subject}</h3>{activeTimer.note && <p>{activeTimer.note}</p>}{activeTimer.targetMinutes && <small>{Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds) > 0 ? `${formatClock(Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds))} remaining` : "Target complete"}</small>}</article>}
-        {selectedCountdown && <article className={styles.countdownCard} style={{ "--count-colour": selectedCountdown.color } as React.CSSProperties}><span>{countdownPassed ? "TIME SINCE" : "COUNTING DOWN TO"}</span><h3>{selectedCountdown.title}</h3><div><strong>{Math.floor(countdownDistance / 86400000)}</strong><small>days</small><strong>{Math.floor((countdownDistance % 86400000) / 3600000)}</strong><small>hours</small></div></article>}
-      </div>
+    <section className={`${styles.content} ${track ? styles.withMusic : ""} ${!showTodos ? styles.noTodos : ""} ${!hasStatus ? styles.noStatus : ""}`}>
       {track && <a className={styles.musicPanel} href={track.external_urls?.spotify} target="_blank" rel="noreferrer"><img src={cover} alt={`${track.album?.name || track.name} cover`} /><div><span>PLAYING NOW</span><h2>{track.name}</h2><p>{track.artists?.map(artist => artist.name).join(", ")}</p><small>{track.album?.name}</small><div className={styles.musicProgress}><i style={{ width: `${track.duration_ms ? Math.min(100, (playback?.progress_ms || 0) / track.duration_ms * 100) : 0}%` }} /></div></div></a>}
+      {showTodos && <div className={styles.todayPanel}><div className={styles.panelHeading}><div><span>TODAY</span><h2>What matters now</h2></div><b>{todos.length}</b></div><div className={styles.todoList}>{todos.length ? todos.map(item => <button className={styles.todo} onClick={() => archiveTodo(item.todo.id)} key={item.todo.id}><i style={{ "--todo-colour": item.color } as React.CSSProperties} /><span><strong>{item.todo.text}</strong><small>{item.source}{item.todo.note ? ` · ${item.todo.note}` : ""}</small></span><em>✓</em></button>) : <div className={styles.clearDay}><span>✦</span><strong>Your day is clear.</strong><small>Anything due today will appear here.</small></div>}</div></div>}
+      {hasStatus && <div className={styles.statusColumn}>
+        {showTimer && activeTimer && <article className={styles.timerCard}><span>STUDY SESSION ACTIVE</span><div><i>◷</i><strong>{formatClock(activeSeconds)}</strong></div><h3>{activeTimer.subject}</h3>{activeTimer.note && <p>{activeTimer.note}</p>}{activeTimer.targetMinutes && <small>{Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds) > 0 ? `${formatClock(Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds))} remaining` : "Target complete"}</small>}</article>}
+        {showCountdown && selectedCountdown && <article className={styles.countdownCard} style={{ "--count-colour": selectedCountdown.color } as React.CSSProperties}><span>{countdownPassed ? "TIME SINCE" : "COUNTING DOWN TO"}</span><h3>{selectedCountdown.title}</h3><div className={styles.countdownUnits}><div><strong>{Math.floor(countdownDistance / 86400000)}</strong><small>days</small></div><div><strong>{Math.floor((countdownDistance % 86400000) / 3600000)}</strong><small>hours</small></div><div><strong>{Math.floor((countdownDistance % 3600000) / 60000)}</strong><small>minutes</small></div><div><strong>{Math.floor((countdownDistance % 60000) / 1000)}</strong><small>seconds</small></div></div></article>}
+      </div>}
     </section>
     {!loaded && <div className={styles.loading}>Preparing your display…</div>}
   </main>;
 }
+
+function VisibilityToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) { return <label className={styles.visibilityToggle}><span>{label}</span><input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} /><i /></label>; }
 
 function normalise(value: Partial<DisplayData> | null): DisplayData { return { ...emptyData, ...(value || {}), overallTodos: value?.overallTodos || [], subjects: value?.subjects || [], countdowns: value?.countdowns || [], displaySettings: value?.displaySettings || {} }; }
 async function cloudRequest(fn: string, body: object) { return fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify(body) }); }

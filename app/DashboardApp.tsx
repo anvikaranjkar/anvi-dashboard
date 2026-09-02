@@ -29,7 +29,7 @@ type AppData = {
   studySessions: StudySession[];
   meetings: Meeting[];
   activeStudyTimer?: ActiveStudyTimer;
-  displaySettings: { countdownId?: string };
+  displaySettings: { countdownId?: string; showTodos?: boolean; showTimer?: boolean; showCountdown?: boolean };
   notificationSettings: { morningSummary: boolean; morningTime: string };
 };
 
@@ -413,7 +413,7 @@ function CountdownRail({ data, now, onAdd, onEdit, onRemove }: { data: AppData; 
     if ((aTime < now) !== (bTime < now)) return aTime < now ? 1 : -1;
     return aTime < now ? bTime - aTime : aTime - bTime;
   });
-  return <div className="countdown-rail"><div className="rail-label"><span>◷</span><div><strong>Countdowns</strong><small>next dates first</small></div></div><div className="countdown-scroll">{ordered.map(c => { const signedDiff = new Date(c.date).getTime() - now; const passed = signedDiff <= 0; const diff = Math.abs(signedDiff); const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); return <div className="countdown-chip" style={{ "--chip": c.color } as React.CSSProperties} key={c.id}><div className="chip-actions"><button onClick={() => onEdit(c)} aria-label={`Edit ${c.title}`}>✎</button><button onClick={() => onRemove(c.id)} aria-label={`Delete ${c.title}`}>×</button></div><span><b>{days}</b>d <b>{hours}</b>h{passed && <em> since</em>}</span><small>{c.title}</small></div> })}<button className="add-countdown" onClick={onAdd}>＋<span>Add date</span></button></div></div>;
+  return <div className="countdown-rail"><div className="rail-label"><span>◷</span><div><strong>Countdowns</strong><small>next dates first</small></div></div><div className="countdown-scroll">{ordered.map(c => { const signedDiff = new Date(c.date).getTime() - now; const passed = signedDiff <= 0; const diff = Math.abs(signedDiff); const days = Math.floor(diff / 86400000); const hours = Math.floor((diff % 86400000) / 3600000); const minutes = Math.floor((diff % 3600000) / 60000); const seconds = Math.floor((diff % 60000) / 1000); return <div className="countdown-chip" style={{ "--chip": c.color } as React.CSSProperties} key={c.id}><div className="chip-actions"><button onClick={() => onEdit(c)} aria-label={`Edit ${c.title}`}>✎</button><button onClick={() => onRemove(c.id)} aria-label={`Delete ${c.title}`}>×</button></div><span><b>{days}</b>d <b>{hours}</b>h <b>{minutes}</b>m <b>{seconds}</b>s{passed && <em> since</em>}</span><small>{c.title}</small></div> })}<button className="add-countdown" onClick={onAdd}>＋<span>Add date</span></button></div></div>;
 }
 
 function DashboardView({ data, weekSeconds, setTab, toggleTodo, addTodo, editTodo, removeTodo, setPriority, update, uploadImages }: { data: AppData; now: number; weekSeconds: number; setTab: (t: Tab) => void; toggleTodo: (id: string) => void; addTodo: (s?: string, e?: boolean, dueDate?: string) => void; editTodo: (id: string) => void; removeTodo: (id: string) => void; setPriority: (id: string, p: Priority) => void; update: (f: (d: AppData) => AppData) => void; uploadImages: (e: ChangeEvent<HTMLInputElement>, t: "visionImages" | "dashboardImages" | "heroImage") => void }) {
