@@ -27,7 +27,7 @@ const emptyData: DisplayData = { overallTodos: [], subjects: [], countdowns: [],
 
 export default function DisplayApp() {
   const [data, setData] = useState<DisplayData>(emptyData);
-  const [now, setNow] = useState(new Date());
+  const [now, setNow] = useState(() => new Date(0));
   const [loaded, setLoaded] = useState(false);
   const [token, setToken] = useState<SpotifyToken | null>(null);
   const [playback, setPlayback] = useState<SpotifyPlayback | null>(null);
@@ -36,6 +36,7 @@ export default function DisplayApp() {
   useEffect(() => {
     try { const cached = normalise(JSON.parse(localStorage.getItem(STORAGE_KEY) || "null")); queueMicrotask(() => setData(cached)); } catch {}
     void loadCloud().then(next => { if (next) setData(next); }).finally(() => setLoaded(true));
+    queueMicrotask(() => setNow(new Date()));
     const clock = setInterval(() => setNow(new Date()), 1000);
     const cloud = setInterval(() => void loadCloud().then(next => { if (next) setData(next); }), 10000);
     const onStorage = (event: StorageEvent) => { if (event.key === STORAGE_KEY && event.newValue) { try { setData(normalise(JSON.parse(event.newValue))); } catch {} } };
@@ -84,7 +85,7 @@ export default function DisplayApp() {
   const todos = useMemo(() => [
     ...data.overallTodos.map(todo => ({ todo, source: "Personal", color: "#f2d49b" })),
     ...data.subjects.flatMap(subject => [...subject.todos, ...(subject.exercises || [])].map(todo => ({ todo, source: subject.name, color: subject.color }))),
-  ].filter(item => item.todo.dueDate === todayKey && !item.todo.done && !item.todo.archivedAt), [data, todayKey]);
+  ].filter(item => item.todo.dueDate && item.todo.dueDate <= todayKey && !item.todo.done && !item.todo.archivedAt), [data, todayKey]);
   const selectedCountdown = data.countdowns.find(item => item.id === data.displaySettings?.countdownId);
   const countdownMs = selectedCountdown ? new Date(selectedCountdown.date).getTime() - now.getTime() : 0;
   const countdownPassed = countdownMs <= 0;
@@ -119,7 +120,7 @@ export default function DisplayApp() {
     <section className={styles.clockArea}><p>{now.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</p><div className={styles.flipClock} aria-label={`Current time ${timePart} ${meridiem}`}>{timePart.split("").map((character, index) => character === ":" ? <span className={styles.colon} key={index}>:</span> : <span className={styles.digit} key={index}><i>{character}</i></span>)}<em>{meridiem}</em></div><h1>{getGreeting(now)}, {data.profile?.name || "Anvi"}.</h1></section>
     <section className={`${styles.content} ${track ? styles.withMusic : ""} ${!showTodos ? styles.noTodos : ""} ${!hasStatus ? styles.noStatus : ""}`}>
       {track && <a className={styles.musicPanel} href={track.external_urls?.spotify} target="_blank" rel="noreferrer"><img src={cover} alt={`${track.album?.name || track.name} cover`} /><div><span>PLAYING NOW</span><h2>{track.name}</h2><p>{track.artists?.map(artist => artist.name).join(", ")}</p><small>{track.album?.name}</small><div className={styles.musicProgress}><i style={{ width: `${track.duration_ms ? Math.min(100, (playback?.progress_ms || 0) / track.duration_ms * 100) : 0}%` }} /></div></div></a>}
-      {showTodos && <div className={styles.todayPanel}><div className={styles.panelHeading}><div><span>TODAY</span><h2>What matters now</h2></div><b>{todos.length}</b></div><div className={styles.todoList}>{todos.length ? todos.map(item => <button className={styles.todo} onClick={() => archiveTodo(item.todo.id)} key={item.todo.id}><i style={{ "--todo-colour": item.color } as React.CSSProperties} /><span><strong>{item.todo.text}</strong><small>{item.source}{item.todo.note ? ` · ${item.todo.note}` : ""}</small></span><em>✓</em></button>) : <div className={styles.clearDay}><span>✦</span><strong>Your day is clear.</strong><small>Anything due today will appear here.</small></div>}</div></div>}
+      {showTodos && <div className={styles.todayPanel}><div className={styles.panelHeading}><div><span>TODAY</span><h2>What matters now</h2></div><b>{todos.length}</b></div><div className={styles.todoList}>{todos.length ? todos.map(item => <button className={styles.todo} onClick={() => archiveTodo(item.todo.id)} key={item.todo.id}><i style={{ "--todo-colour": item.color } as React.CSSProperties} /><span><strong>{item.todo.text}</strong><small>{item.source}{item.todo.dueDate && item.todo.dueDate < todayKey ? " · Rolled over" : ""}{item.todo.note ? ` · ${item.todo.note}` : ""}</small></span><em>✓</em></button>) : <div className={styles.clearDay}><span>✦</span><strong>Your day is clear.</strong><small>Anything due today will appear here.</small></div>}</div></div>}
       {hasStatus && <div className={styles.statusColumn}>
         {showTimer && activeTimer && <article className={styles.timerCard}><span>STUDY SESSION ACTIVE</span><div><i>◷</i><strong>{formatClock(activeSeconds)}</strong></div><h3>{activeTimer.subject}</h3>{activeTimer.note && <p>{activeTimer.note}</p>}{activeTimer.targetMinutes && <small>{Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds) > 0 ? `${formatClock(Math.max(0, activeTimer.targetMinutes * 60 - activeSeconds))} remaining` : "Target complete"}</small>}</article>}
         {showCountdown && selectedCountdown && <article className={styles.countdownCard} style={{ "--count-colour": selectedCountdown.color } as React.CSSProperties}><span>{countdownPassed ? "TIME SINCE" : "COUNTING DOWN TO"}</span><h3>{selectedCountdown.title}</h3><div className={styles.countdownUnits}><div><strong>{Math.floor(countdownDistance / 86400000)}</strong><small>days</small></div><div><strong>{Math.floor((countdownDistance % 86400000) / 3600000)}</strong><small>hours</small></div><div><strong>{Math.floor((countdownDistance % 3600000) / 60000)}</strong><small>minutes</small></div><div><strong>{Math.floor((countdownDistance % 60000) / 1000)}</strong><small>seconds</small></div></div></article>}
