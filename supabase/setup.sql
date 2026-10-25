@@ -12,6 +12,25 @@ create table if not exists public.student_dashboards (
 alter table public.student_dashboards enable row level security;
 revoke all on public.student_dashboards from anon, authenticated;
 
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  endpoint text unique not null,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.push_notification_log (
+  dedupe_key text primary key,
+  sent_at timestamptz not null default now()
+);
+
+alter table public.push_subscriptions enable row level security;
+alter table public.push_notification_log enable row level security;
+revoke all on public.push_subscriptions from anon, authenticated;
+revoke all on public.push_notification_log from anon, authenticated;
+
 drop function if exists public.load_student_dashboard(text);
 drop function if exists public.save_student_dashboard(text, jsonb);
 

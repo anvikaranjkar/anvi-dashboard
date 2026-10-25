@@ -12,6 +12,9 @@ self.addEventListener("push", event => {
     tag: message.tag || "anvis-dashboard-push",
     icon: "/icon-192.png",
     badge: "/icon-192.png",
+    vibrate: [120, 60, 120],
+    renotify: true,
+    actions: [{ action: "open", title: "Open dashboard" }],
     data: { url: message.url || "/" },
   }));
 });

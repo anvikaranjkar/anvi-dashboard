@@ -18,13 +18,15 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 - Daily, weekly, lifetime, average, consistency and longest-session statistics
 - Seven-day study chart, subject breakdown and week-over-week comparison
 - Overall todos grouped by subject, including required Maths exercises
+- A daily card board with Today, All Subjects, Personal and individual subject tabs
+- A subject/area selector whenever you create or edit a to-do, reminder, countdown or event
 - Editable todo completion dates, a dedicated today list and a monthly due-date calendar
 - Automatic rollover of unfinished overdue work into today’s list and focus display
 - Clickable calendar days with a full agenda and one-tap creation of dated to-dos
 - A separate archive where completed tasks can be restored or permanently removed
 - Upcoming meeting planner with editable dates, start/end times, details and per-meeting alert timing
-- Installable web app for iPhone and Mac with native-style notification support
-- Timed todo reminders, flexible meeting alerts and a configurable morning summary
+- Installable web app for iPhone and Mac with background Web Push support
+- Timed todo reminders, flexible meeting alerts, overdue nudges and configurable morning/evening summaries
 - Goals by time horizon, chronologically ordered countdowns, bookmarks, notes and square bulk-upload image boards
 - Subject-specific resource links and notebooks, plus a dedicated editable Ideas page
 - A combined resource library that automatically includes links saved inside every subject
@@ -39,7 +41,7 @@ A responsive personal student dashboard for tasks, goals, subject insights, Math
 
 1. Extract the ZIP and upload the folder to GitHub, GitLab or Bitbucket.
 2. In Vercel, choose **Add New → Project**, import the repository and keep the detected **Next.js** settings.
-3. Press **Deploy**. The supplied Supabase project is already configured in the app, so no environment variables are required.
+3. Press **Deploy**. The supplied Supabase project is already configured for dashboard data. Background push is optional and needs the one-time setup below.
 
 Vercel uses the included `vercel.json`, runs `npm install`, then runs the standard Next.js Vercel build.
 
@@ -50,6 +52,28 @@ Vercel uses the included `vercel.json`, runs `npm install`, then runs the standa
 3. Open the dashboard on any device. It loads and saves the same Supabase record automatically, with no passphrase or connection setup.
 
 The app keeps an on-device cache for offline continuity. Supabase remains the shared source for cross-device persistence, and its `vision-board` storage bucket holds uploaded images.
+
+## Background notifications while the app is closed
+
+The app now contains the complete Web Push system: each phone or laptop registers itself, Supabase stores the device subscription, and the secure notification route sends todo reminders, event alerts, morning summaries, overdue nudges and evening check-ins.
+
+Do this once:
+
+1. Run the updated `supabase/setup.sql` in **Supabase → SQL Editor**. This creates the two private notification tables.
+2. On your computer, run `npm run push:keys`. Copy the two generated values.
+3. In **Supabase → Project Settings → API**, copy the **service role key**. Keep this private.
+4. In **Vercel → Project → Settings → Environment Variables**, add:
+   - `SUPABASE_SERVICE_ROLE_KEY` — the private Supabase service role key
+   - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` — the generated public key
+   - `VAPID_PRIVATE_KEY` — the generated private key
+   - `VAPID_SUBJECT` — for example `mailto:your-email@example.com`
+   - `CRON_SECRET` — a new random password of at least 16 characters
+5. Choose a scheduler:
+   - **Vercel Pro:** replace `vercel.json` with the supplied `vercel-cron.pro.example.json`, then redeploy. It checks every 15 minutes.
+   - **Vercel Hobby:** leave `vercel.json` as-is so deployment succeeds. Use a scheduler such as cron-job.org to call `https://YOUR-VERCEL-DOMAIN/api/cron/notifications` every 15 minutes with the header `Authorization: Bearer YOUR_CRON_SECRET`.
+6. Redeploy the project. Open **Settings → Web notifications** on each device and turn it on.
+
+On iPhone, open the deployed site in Safari, choose **Share → Add to Home Screen**, launch the installed app, then enable notifications. Browser and operating-system rules mean no website can silently grant itself notification permission; every device must opt in once.
 
 ## Local development
 
